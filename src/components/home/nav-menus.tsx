@@ -135,7 +135,7 @@ const resources: MenuItem[] = [
   {
     icon: <FlaskConical />,
     title: "Projects",
-    description: "Projects built on Aerostack2, and the roadmaps.",
+    description: "Projects built on Aerostack2.",
     href: "/docs/projects",
   },
 ];
