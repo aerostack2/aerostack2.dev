@@ -1,4 +1,3 @@
-import type * as PageTree from "fumadocs-core/page-tree";
 import {
   DocsBody,
   DocsDescription,
@@ -12,25 +11,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/components/mdx";
 import { gitConfig } from "@/lib/shared";
-import { getPageImageUrl, getPageMarkdownUrl, source } from "@/lib/source";
-
-function containsUrl(folder: PageTree.Folder, url: string): boolean {
-  if (folder.index?.url === url) return true;
-  return folder.children.some((node) =>
-    node.type === "page"
-      ? node.url === url
-      : node.type === "folder" && containsUrl(node, url),
-  );
-}
-
-/** Name of the top-level sidebar section a page belongs to, if any. */
-function sectionName(url: string): string | undefined {
-  for (const node of source.getPageTree().children) {
-    if (node.type === "folder" && containsUrl(node, url)) {
-      return typeof node.name === "string" ? node.name : undefined;
-    }
-  }
-}
+import {
+  getPageImageUrl,
+  getPageMarkdownUrl,
+  getPageTitle,
+  getSectionName,
+  source,
+} from "@/lib/source";
 
 export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
   const params = await props.params;
@@ -39,7 +26,7 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
 
   const MDX = page.data.body;
   const markdownUrl = getPageMarkdownUrl(page).url;
-  const section = sectionName(page.url);
+  const section = getSectionName(page.url);
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
@@ -90,7 +77,7 @@ export async function generateMetadata(
   if (!page) notFound();
 
   return {
-    title: page.data.title,
+    title: getPageTitle(page),
     description: page.data.description,
     openGraph: {
       images: getPageImageUrl(page).url,

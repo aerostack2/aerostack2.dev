@@ -1,3 +1,4 @@
+import type * as PageTree from "fumadocs-core/page-tree";
 import { loader } from "fumadocs-core/source";
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
 import { applyMdxPreset } from "fumadocs-mdx/config";
@@ -45,7 +46,54 @@ export const source = loader({
   },
 });
 
-export function getPageImageUrl(page: (typeof source)["$inferPage"]) {
+type Page = (typeof source)["$inferPage"];
+
+function containsUrl(folder: PageTree.Folder, url: string): boolean {
+  if (folder.index?.url === url) return true;
+  return folder.children.some((node) =>
+    node.type === "page"
+      ? node.url === url
+      : node.type === "folder" && containsUrl(node, url),
+  );
+}
+
+/** Name of the top-level sidebar section a page belongs to, if any. */
+export function getSectionName(url: string): string | undefined {
+  for (const node of source.getPageTree().children) {
+    if (node.type === "folder" && containsUrl(node, url)) {
+      return typeof node.name === "string" ? node.name : undefined;
+    }
+  }
+}
+
+/** True for a section's `index.mdx`, the page its sidebar folder opens. */
+function isSectionIndex(page: Page): boolean {
+  return page.slugs.length === 1 && page.path.endsWith("index.mdx");
+}
+
+/**
+ * The page's own name: landing pages are all titled "Overview", so they go by
+ * their section's name instead, and the docs root is "Documentation".
+ */
+export function getPageName(page: Page): string {
+  if (page.slugs.length === 0) return "Documentation";
+  if (isSectionIndex(page)) return getSectionName(page.url) ?? page.data.title;
+  return page.data.title;
+}
+
+/**
+ * The page's name for the browser tab. Titles repeat across sections
+ * ("Motion controller" exists under Concepts, Plugins and ROS 2 Interfaces),
+ * so every page below a landing page carries its section after it.
+ */
+export function getPageTitle(page: Page): string {
+  const name = getPageName(page);
+  const section = getSectionName(page.url);
+  if (!section || isSectionIndex(page)) return name;
+  return `${name} – ${section}`;
+}
+
+export function getPageImageUrl(page: Page) {
   const segments = [...page.slugs, "image.png"];
 
   return {
@@ -58,7 +106,7 @@ export function getPageImageUrl(page: (typeof source)["$inferPage"]) {
   };
 }
 
-export function getPageMarkdownUrl(page: (typeof source)["$inferPage"]) {
+export function getPageMarkdownUrl(page: Page) {
   const segments = [...page.slugs, "content.md"];
 
   return {
@@ -71,7 +119,7 @@ export function getPageMarkdownUrl(page: (typeof source)["$inferPage"]) {
   };
 }
 
-export async function getLLMText(page: (typeof source)["$inferPage"]) {
+export async function getLLMText(page: Page) {
   const processed = await page.data.getText("processed");
 
   return `# ${page.data.title} (${page.url})

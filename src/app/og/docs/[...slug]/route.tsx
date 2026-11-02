@@ -2,7 +2,7 @@ import { generate as DefaultImage } from "fumadocs-ui/og";
 import { notFound } from "next/navigation";
 import { ImageResponse } from "next/og";
 import { appName } from "@/lib/shared";
-import { getPageImageUrl, source } from "@/lib/source";
+import { getPageImageUrl, getPageName, source } from "@/lib/source";
 
 export const revalidate = false;
 
@@ -16,7 +16,7 @@ export async function GET(
 
   return new ImageResponse(
     <DefaultImage
-      title={page.data.title}
+      title={getPageName(page)}
       description={page.data.description}
       site={appName}
     />,
