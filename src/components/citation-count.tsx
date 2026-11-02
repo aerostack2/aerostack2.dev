@@ -1,5 +1,4 @@
 import { ArrowUpRight } from "lucide-react";
-import Link from "next/link";
 import {
   type CitingPaper,
   getCitations,
@@ -7,17 +6,19 @@ import {
 } from "@/lib/citations";
 
 /**
- * How many papers cite Aerostack2, from Google Scholar, monthly. Links to
- * the full list on this site when it was fetched, and to Scholar otherwise.
+ * How many papers cite Aerostack2, from Google Scholar, monthly, linking to
+ * the paper's page there. The citing papers are listed under it on the same
+ * page.
  */
 export async function CitationCount() {
-  const [{ count, link }, papers] = await Promise.all([
-    getCitations(),
-    getCitingPapers(),
-  ]);
-  const local = papers !== null && papers.length > 0;
-  const body = (
-    <>
+  const { count, link } = await getCitations();
+  return (
+    <a
+      href={link}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="not-prose group my-6 flex items-center justify-between gap-4 rounded-lg border border-fd-border p-5 transition-colors hover:bg-fd-accent/50"
+    >
       <span>
         <span className="block font-serif text-4xl tabular-nums">
           {count.toLocaleString("en-US")}
@@ -27,26 +28,9 @@ export async function CitationCount() {
         </span>
       </span>
       <span className="flex items-center gap-1 text-sm text-fd-muted-foreground transition-colors group-hover:text-fd-foreground">
-        See who cites it
-        {!local && <ArrowUpRight className="size-4" />}
+        Open in Scholar
+        <ArrowUpRight className="size-4" />
       </span>
-    </>
-  );
-  const className =
-    "not-prose group my-6 flex items-center justify-between gap-4 rounded-lg border border-fd-border p-5 transition-colors hover:bg-fd-accent/50";
-
-  return local ? (
-    <Link href="/docs/about/cited-by" className={className}>
-      {body}
-    </Link>
-  ) : (
-    <a
-      href={link}
-      target="_blank"
-      rel="noreferrer noopener"
-      className={className}
-    >
-      {body}
     </a>
   );
 }
@@ -80,7 +64,7 @@ export async function CitingPapers() {
     <>
       {[...years].map(([year, group]) => (
         <section key={year}>
-          <h2 id={year.toLowerCase()}>{year}</h2>
+          <h3 id={year.toLowerCase()}>{year}</h3>
           <ol className="not-prose my-4 flex flex-col divide-y divide-fd-border border-y border-fd-border">
             {group.map((paper) => (
               <li
