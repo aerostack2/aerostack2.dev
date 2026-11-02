@@ -29,6 +29,7 @@ import { FrameTree } from "./diagrams/frame-tree";
 import { LayerDiagram } from "./diagrams/layer-diagram";
 import { PlatformStateMachine, ReadyToFly } from "./diagrams/platform-visuals";
 import { Figure } from "./figure";
+import { Maintainers, UserReviews } from "./people";
 import { Video } from "./video";
 
 export function getMDXComponents(components?: MDXComponents) {
@@ -75,6 +76,8 @@ export function getMDXComponents(components?: MDXComponents) {
     BehaviorLifecycle,
     CitationCount,
     CitingPapers,
+    Maintainers,
+    UserReviews,
     ...components,
   } satisfies MDXComponents;
 }

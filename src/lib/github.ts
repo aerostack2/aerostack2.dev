@@ -123,3 +123,104 @@ export async function getCommunity(): Promise<Community> {
 /** A GitHub avatar at `size` pixels, doubled for sharp screens. */
 export const avatarAt = (url: string, size: number) =>
   `${url}${url.includes("?") ? "&" : "?"}s=${size * 2}`;
+
+/** Where people leave their reviews: a discussion on the old site's repository. */
+export const reviewsDiscussion = {
+  owner: "aerostack2",
+  repo: "aerostack2.github.io",
+  number: 97,
+  url: "https://github.com/aerostack2/aerostack2.github.io/discussions/97",
+};
+
+export type Review = {
+  login: string;
+  name: string | null;
+  avatar: string;
+  profile: string;
+  url: string;
+  date: string;
+  /** The review's paragraphs, as plain text. */
+  paragraphs: string[];
+};
+
+type ReviewsResponse = {
+  data?: {
+    repository: {
+      discussion: {
+        comments: {
+          nodes: {
+            author: {
+              login: string;
+              avatarUrl: string;
+              url: string;
+              name?: string | null;
+            } | null;
+            bodyText: string;
+            createdAt: string;
+            isMinimized: boolean;
+            url: string;
+          }[];
+        };
+      } | null;
+    };
+  };
+};
+
+/**
+ * The user reviews, oldest first: the comments on the reviews discussion,
+ * hidden ones left out. GitHub's GraphQL API needs a token, so without
+ * `GITHUB_TOKEN`, or on any failure, it gives back null and the page just
+ * links to the discussion.
+ */
+export async function getReviews(): Promise<Review[] | null> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return null;
+  const { owner, repo, number } = reviewsDiscussion;
+  const query = `{
+    repository(owner: "${owner}", name: "${repo}") {
+      discussion(number: ${number}) {
+        comments(first: 100) {
+          nodes {
+            author { login avatarUrl url ... on User { name } }
+            bodyText
+            createdAt
+            isMinimized
+            url
+          }
+        }
+      }
+    }
+  }`;
+  try {
+    const response = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query }),
+      next: { revalidate: 86400 },
+    });
+    if (!response.ok) return null;
+    const { data } = (await response.json()) as ReviewsResponse;
+    const comments = data?.repository.discussion?.comments.nodes;
+    if (!comments) return null;
+    return comments.flatMap((comment) =>
+      comment.isMinimized || !comment.author
+        ? []
+        : [
+            {
+              login: comment.author.login,
+              name: comment.author.name || null,
+              avatar: comment.author.avatarUrl,
+              profile: comment.author.url,
+              url: comment.url,
+              date: comment.createdAt,
+              paragraphs: comment.bodyText
+                .split(/\n\s*\n|\n/)
+                .map((line) => line.trim())
+                .filter(Boolean),
+            },
+          ],
+    );
+  } catch {
+    return null;
+  }
+}
