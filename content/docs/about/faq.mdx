@@ -1,0 +1,153 @@
+---
+title: FAQ
+description: Answers to the questions people ask most about Aerostack2.
+icon: CircleHelp
+---
+
+## General
+
+<Accordions type="multiple">
+<Accordion title="What is Aerostack2?" id="what-is-aerostack2">
+
+A ROS 2 framework for building autonomous aerial systems, from one drone to a
+swarm. Your mission talks to a standard set of interfaces, and each drone sits
+behind an [aerial platform](/docs/concepts/aerial-platform) that hides the
+hardware. The [overview](/docs/getting-started) shows how the pieces fit.
+
+</Accordion>
+<Accordion title="Do I need a drone to try it?" id="do-i-need-a-drone">
+
+No. Aerostack2 ships with two simulators, so you can fly your first mission on a
+laptop. The [Quickstart](/docs/getting-started/quickstart) takes about ten
+minutes.
+
+</Accordion>
+<Accordion title="Can I use it in a commercial product?" id="commercial-use">
+
+Yes. Aerostack2 is under the [BSD 3-Clause license](/docs/about/license), which
+allows use in open and closed projects as long as you keep the copyright
+notice. Some components are research prototypes, so test them thoroughly before
+relying on them.
+
+</Accordion>
+<Accordion title="How do I cite Aerostack2?" id="cite">
+
+Cite the paper that introduces it. [Citations](/docs/about/citations) has the
+reference and a BibTeX entry.
+
+</Accordion>
+</Accordions>
+
+## Installing
+
+<Accordions type="multiple">
+<Accordion title="Which systems and ROS 2 versions are supported?" id="supported-systems">
+
+Aerostack2 runs on Ubuntu with the current ROS 2 long-term support releases.
+[Installation](/docs/getting-started/installation) lists them, along with what
+each install method supports.
+
+</Accordion>
+<Accordion title="Does it run on macOS?" id="macos">
+
+Yes, on Apple silicon, through [Pixi](/docs/getting-started/installation#pixi).
+You don't need a system-wide ROS 2 install. The multirotor simulator runs there
+too.
+
+</Accordion>
+<Accordion title="Does it run on Windows?" id="windows">
+
+Not natively yet. It's on the [roadmap](/docs/about/roadmap). Until then, use
+the [Docker images](/docs/getting-started/installation#docker) or a Linux
+machine.
+
+</Accordion>
+<Accordion title="Should I install binary packages or build from source?" id="binary-or-source">
+
+Use binary packages to fly with Aerostack2 as it is. Build from source to change
+it, to write your own components or to get the newest features. The example
+projects follow the latest code, so with binary packages, check out the project
+version that matches your install.
+
+</Accordion>
+</Accordions>
+
+## Flying
+
+<Accordions type="multiple">
+<Accordion title="Which drones can I fly?" id="which-drones">
+
+Drones with a PX4 autopilot, Bitcraze Crazyflies, the Ryze Tello and several DJI
+Matrice models, among others.
+[Aerial platforms](/docs/aerial-platforms) lists every one.
+
+</Accordion>
+<Accordion title="How do I fly a PX4 drone?" id="px4">
+
+There are two platforms. [Pixhawk](/docs/aerial-platforms/pixhawk) talks to PX4
+directly over uXRCE-DDS and is the usual choice.
+[MAVLink](/docs/aerial-platforms/mavlink) goes through MAVROS, for when MAVLink
+is what you already have, such as older PX4 firmware or a telemetry radio.
+
+</Accordion>
+<Accordion title="My drone isn't supported. What can I do?" id="unsupported-drone">
+
+Write a platform for it. A platform is one node with a handful of methods, and
+the [platform tutorial](/docs/develop/aerial-platform) walks through one.
+
+</Accordion>
+<Accordion title="Which simulator should I use?" id="which-simulator">
+
+Start with the
+[multirotor simulator](/docs/aerial-platforms/multirotor-simulator). It starts
+in a second and runs anywhere. Move to
+[Gazebo](/docs/aerial-platforms/gazebo-simulation) when a mission needs cameras,
+lidars or a 3D world.
+
+</Accordion>
+<Accordion title="Can I fly several drones at once?" id="several-drones">
+
+Yes. Each drone runs its own stack in its own namespace, so a swarm is several
+stacks side by side. The
+[architecture](/docs/concepts/architecture) page explains how.
+
+</Accordion>
+<Accordion title="How do I write a mission?" id="write-a-mission">
+
+With the Python API, a behavior tree or the mission interpreter.
+[Missions](/docs/concepts/missions) shows the same mission written all three
+ways.
+
+</Accordion>
+<Accordion title="Can I add my own controller, estimator or behavior?" id="extend">
+
+Yes. Most components load plugins, and the [Develop](/docs/develop) section has
+a tutorial for each kind.
+
+</Accordion>
+</Accordions>
+
+## Getting help
+
+<Accordions type="multiple">
+<Accordion title="Where do I ask a question?" id="ask">
+
+Start a thread in
+[GitHub Discussions](https://github.com/aerostack2/aerostack2/discussions).
+Search there first, since your question may already have an answer.
+
+</Accordion>
+<Accordion title="How do I report a bug?" id="report-a-bug">
+
+Open an [issue](https://github.com/aerostack2/aerostack2/issues).
+[Opening an issue](/docs/develop/issues) explains what to include so it gets
+fixed quickly.
+
+</Accordion>
+<Accordion title="How can I contribute?" id="contribute">
+
+Fix a bug, add a feature, write a platform or improve these docs. The
+[Develop](/docs/develop) section covers setting up and opening a pull request.
+
+</Accordion>
+</Accordions>
