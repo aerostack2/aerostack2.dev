@@ -7,6 +7,7 @@ import * as lucide from "lucide-react";
 import { createElement } from "react";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
+import { codeThemes } from "./code-themes";
 import { docsContentRoute, docsImageRoute, docsRoute } from "./shared";
 
 const docs = defineDocs({
@@ -19,6 +20,13 @@ const docs = defineDocs({
     mdxOptions: applyMdxPreset({
       remarkPlugins: (v) => [...v, remarkMath],
       rehypePlugins: (v) => [rehypeKatex, ...v],
+      // Vitesse, tuned for shell snippets, in place of the default GitHub
+      // themes. Setting `themes` replaces Fumadocs' defaults, so
+      // `defaultColor` goes too.
+      rehypeCodeOptions: {
+        themes: codeThemes,
+        defaultColor: false,
+      },
     }),
     postprocess: {
       includeProcessedMarkdown: true,

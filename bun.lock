@@ -7,6 +7,7 @@
       "dependencies": {
         "@base-ui/react": "1.6.0",
         "@lucasmarkes/hairline": "^0.5.1",
+        "@shikijs/themes": "4.4.1",
         "@xyflow/react": "^12.12.1",
         "cnfast": "^0.1.0",
         "fumadocs-core": "16.14.0",
