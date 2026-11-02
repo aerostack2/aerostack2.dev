@@ -67,3 +67,21 @@
   --color-fd-secondary: #1d1f25;
   --color-fd-muted-foreground: #9aa0ac;
 }
+
+/* Inline code takes the accent blue, on a faint tint of it, in both themes.
+   Code inside links and headings keeps their colour, as the typography
+   plugin already sets. Code blocks are left alone. */
+.prose {
+  --tw-prose-code: var(--color-fd-primary);
+}
+.prose
+  :where(code):not(
+    :where(pre *, [class~="not-prose"], [class~="not-prose"] *)
+  ) {
+  border-color: color-mix(in oklab, var(--color-fd-primary) 18%, transparent);
+  background-color: color-mix(
+    in oklab,
+    var(--color-fd-primary) 8%,
+    transparent
+  );
+}
