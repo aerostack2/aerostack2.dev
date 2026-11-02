@@ -1,0 +1,53 @@
+---
+title: SHEREC
+description: Safe, healthy and environmental ship recycling, funded by Horizon Europe.
+icon: Ship
+---
+
+SHEREC is a Horizon Europe innovation action that brings robots, data and AI
+into ship recycling. CVAR-UPM is a partner and develops the localization and
+navigation of its inspection drone on Aerostack2.
+
+- **Programme.** Horizon Europe, call HORIZON-CL4-2023-HUMAN-01-CNECT
+- **Grant agreement.** 101136056
+- **Dates.** January 2024 to December 2027
+- **Coordinator.** HIDROPAR, Türkiye
+- **Links.** [sherecproject.com](https://www.sherecproject.com/) and
+  [CORDIS](https://cordis.europa.eu/project/id/101136056)
+
+## The project
+
+Ship recycling takes ships apart so their materials can be reused, which makes
+it part of Europe's circular economy. It is also one of the most dangerous
+jobs in the world, with high rates of injury and exposure to toxic waste.
+SHEREC sets out to make it safer and cleaner in three ways.
+
+1. An AI-powered drone inspects the inside of the ship and finds hazardous
+   materials.
+2. A digital twin of the ship and AI planning produce the recycling plan
+   automatically.
+3. Two mobile robots, autonomous or teleoperated, carry out the cutting and
+   paint removal.
+
+## Aerostack2 in SHEREC
+
+The inspection drone flies inside ships, where there is no GPS. CVAR-UPM leads
+its semantic SLAM, which keeps the drone's position free of drift by
+recognising walls, rooms, doors and equipment as landmarks.
+
+- [sherec_semantic_slam](https://github.com/cvar-upm/sherec_semantic_slam) is
+  deliverable D2.4 of the project. It runs onboard as an Aerostack2 node and
+  publishes the corrected pose that navigation uses, along with a semantic map
+  of the ship's interior.
+- [project_sherec_navigation](https://github.com/cvar-upm/project_sherec_navigation)
+  is an example of the Aerostack2 navigation developed for the project, which
+  runs in simulation with Docker.
+
+## Publications
+
+- D. Perez-Saura, M. Fernandez-Cortizas, A. J. Gaona and P. Campoy.
+  [Dual Pose-Graph Semantic Localization for Vision-Based Autonomous Drone Racing](https://arxiv.org/abs/2604.15168).
+  arXiv:2604.15168, 2026.
+- A. J. Gaona, D. Perez-Saura, F. J. Anguita and P. Campoy.
+  [Flight-Ready LiDAR-Inertial Odometry for Embedded Drone Platforms](https://arxiv.org/abs/2607.22145).
+  arXiv:2607.22145, 2026.

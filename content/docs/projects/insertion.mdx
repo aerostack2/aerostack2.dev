@@ -1,8 +1,83 @@
 ---
 title: INSERTION
+description: Inspection and maintenance in harsh environments by multi-robot cooperation.
 icon: Wrench
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_14_projects/_insertion/index.rst`.
-</Callout>
+Aerostack2 was partly developed during INSERTION, Inspection and maiNtenance in
+harSh EnviRonments by mulTI-robot cooperatiON. The project is funded by the
+Spanish State Research Agency under the 2021 call for knowledge generation
+projects, and co-funded by the European Union through the ERDF.
+
+- **Funder.** MICIU/AEI/10.13039/501100011033 and ERDF, EU
+- **Reference.** PID2021-127648OB-C32, the UPM sub-project
+- **Partners.** Universidad Pablo de Olavide, Universidad Politécnica de Madrid
+  and Universidad Complutense de Madrid
+- **Links.** [Project website](https://robotics.upo.es/insertion/)
+
+## The project
+
+INSERTION advances the technology that teams of robots need to inspect and
+maintain installations in harsh environments safely. The teams mix aerial,
+ground and surface vehicles. The project develops localization for scenes with
+poor visibility, navigation through clutter, cooperation between the three
+kinds of vehicle, and control that keeps aerial and surface vehicles steady
+under disturbances.
+
+Robots in these places take people out of hazardous work and improve working
+conditions. Target applications include sewers, offshore oil and gas platforms,
+wind turbines, gas and power tunnels, mines, industrial storage tanks and
+polluted water bodies.
+
+The project has three global objectives.
+
+- **Perception in harsh environments.** Robust localization, perception and
+  mapping that keep working in fog, rain or darkness, by combining cameras,
+  LiDAR and radar.
+- **Navigation and control in complex environments.** Control strategies for
+  aerial and surface vehicles in wind gusts, water currents and strong
+  disturbances, for safe autonomous navigation through 3D clutter.
+- **Multi-robot cooperation.** Cooperation between aerial, ground and surface
+  vehicles, from loose swarm-based cooperation to tight cooperation between
+  robots joined by a tether.
+
+## Sub-projects
+
+INSERTION is a coordinated project with three sub-projects.
+
+1. **Robust localization, mapping and planning in harsh environments**, led by
+   the [Service Robotics Laboratory](https://www.upo.es/robot/en/) of the
+   Universidad Pablo de Olavide. It covers localization, mapping and planning
+   for heterogeneous robots, and their coordination.
+2. **UAV perception, control and operation in harsh environments**, led by
+   [CVAR](https://cvar.fi.upm.es/) at the Universidad Politécnica de Madrid. It
+   brings autonomy for single drones and drone teams in GPS-denied areas.
+3. **Cooperation of USVs and UAVs for inspection in dynamic environments**, led
+   by [ISCAR](https://www.iscar.es/) at the Universidad Complutense de Madrid.
+   It brings surface vehicles, cooperation between heterogeneous robots, and
+   applications in water.
+
+INSERTION builds on COMCISE, an earlier coordinated project on inspection and
+security missions by drones working with ground robots (RTI2018-100847-C11 and
+C12). It widens that scope to surface vehicles, harsher environments with
+poorer visibility, and more complex cooperation between robots.
+
+## Aerostack2 in INSERTION
+
+Both CVAR-UPM and the Service Robotics Laboratory at UPO use Aerostack2 to fly
+the project's aerial fleets, which coordinate with surface vehicles in
+inspection scenarios. CVAR-UPM's missions for the project are in
+[project_insertion](https://github.com/cvar-upm/project_insertion).
+
+## Publications
+
+- C. D. R. Pita-Romero, P. Arias-Perez, M. Fernandez-Cortizas, R. Perez-Segui
+  and P. Campoy.
+  [Flocking Behavior for Dynamic and Complex Swarm Structures](https://arxiv.org/abs/2601.21772).
+  arXiv:2601.21772, 2026.
+
+<Figure
+  src="/images/projects/insertion-funding.jpeg"
+  alt="Funded by MICIU/AEI and by the European Union through the ERDF"
+  scale={60}
+/>

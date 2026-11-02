@@ -1,5 +1,16 @@
 {
   "title": "Projects",
   "icon": "FolderGit2",
-  "pages": ["index", "gsoc", "insertion", "ratec", "roadmaps"]
+  "pages": [
+    "index",
+    "---European---",
+    "coresense",
+    "sherec",
+    "---Spanish---",
+    "insertion",
+    "ratec",
+    "copilot",
+    "---Community---",
+    "roadmaps"
+  ]
 }

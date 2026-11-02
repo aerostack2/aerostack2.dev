@@ -1,0 +1,59 @@
+---
+title: CoreSense
+description: A hybrid cognitive architecture for deep understanding, funded by Horizon Europe.
+icon: BrainCircuit
+---
+
+CoreSense is a Horizon Europe research and innovation action that develops a
+cognitive architecture for autonomous robots, grounded in formal theories of
+understanding and awareness. The Universidad Politécnica de Madrid coordinates
+it, and CVAR-UPM builds its drone demonstrator on Aerostack2.
+
+- **Programme.** Horizon Europe, call HORIZON-CL4-2021-DIGITAL-EMERGING-01
+- **Grant agreement.** 101070254
+- **Dates.** October 2022 to September 2026
+- **Coordinator.** Universidad Politécnica de Madrid
+- **Links.** [coresense.eu](https://coresense.eu) and
+  [CORDIS](https://cordis.europa.eu/project/id/101070254)
+
+## The project
+
+Robots now work in open environments that their designers can't fully foresee.
+They often don't understand what is going on around them or their own role in
+it, which makes them hard to rely on and hard to trust. CoreSense answers this
+with a theory of understanding, a theory of awareness, reusable software that
+applies both to real robots, and three demonstrations of what they bring. The
+demonstrations make drone teams more resilient, manufacturing robots more
+flexible, and social robots better aligned with the people around them.
+
+## Aerostack2 in CoreSense
+
+The drone demonstration is the
+[inspection testbed](https://coresenseeu.github.io/testbeds/docs/inspection_testbed.html),
+where a swarm of drones inspects an array of solar panels. The drones split the
+area through an auction, fly their coverage lanes, and take over the waypoints
+of a drone that fails mid-mission. Aerostack2 is the runtime of the whole
+testbed, and its simulation runs entirely in the Aerostack2 multirotor
+simulator.
+
+- [TB2_Panel_Inspection_Simulation](https://github.com/CoreSenseEU/TB2_Panel_Inspection_Simulation)
+  holds the simulated inspection missions, written with the Aerostack2 Python
+  API.
+- [as2_knowledge_graph](https://github.com/aerostack2/as2_knowledge_graph)
+  is the knowledge graph behind the knowledge-driven missions listed below.
+- The [simulated dataset](https://zenodo.org/records/23162059) and the
+  [ROS bag dataset](https://zenodo.org/records/23243295) record the testbed's
+  missions.
+
+## Publications
+
+- G. GP-Lenza, C. D. R. Pita-Romero, M. Fernandez-Cortizas and P. Campoy.
+  [A Methodology for Designing Knowledge-Driven Missions for Robots](https://arxiv.org/abs/2601.20797).
+  arXiv:2601.20797, 2026.
+- C. D. R. Pita-Romero, P. Arias-Perez, M. Fernandez-Cortizas, R. Perez-Segui
+  and P. Campoy.
+  [Flocking Behavior for Dynamic and Complex Swarm Structures](https://arxiv.org/abs/2601.21772).
+  arXiv:2601.21772, 2026.
+- G. GP-Lenza, M. Fernandez-Cortizas, M. Molina and P. Campoy.
+  [Distributed Coordination for Resilient Multi-UAV Remote Sensing: A Photovoltaic Inspection Case Study](https://arxiv.org/abs/2607.24482).
+  arXiv:2607.24482, 2026.
