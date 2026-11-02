@@ -1,0 +1,186 @@
+---
+title: Opening a pull request
+description: How to get a change into Aerostack2, from the first commit to the merge.
+icon: GitPullRequest
+---
+
+Every change to Aerostack2 goes through a pull request against `main`. This page walks through one,
+from setting up your copy of the code to the merge.
+
+For anything bigger than a small fix, [open an issue](/docs/develop/issues) first, or comment on an
+existing one, to say what you plan to do. The team can tell you early if the change belongs
+somewhere else or is already under way.
+
+<Steps>
+<Step>
+
+### Get the code
+
+If you're not a member of the Aerostack2 organization, fork
+[aerostack2/aerostack2](https://github.com/aerostack2/aerostack2) on GitHub and clone your fork into
+a workspace. Members can clone the main repository and push branches to it directly.
+
+```bash
+mkdir -p ~/aerostack2_ws/src && cd ~/aerostack2_ws/src
+git clone https://github.com/<your-user>/aerostack2.git
+cd aerostack2
+git remote add upstream https://github.com/aerostack2/aerostack2.git
+```
+
+Then install the dependencies and build it as in
+[Installation from source](/docs/getting-started/installation#from-source).
+
+</Step>
+<Step>
+
+### Install the git hooks
+
+The repository checks code style and commit messages before each commit, with
+[lefthook](https://lefthook.dev). The hooks run in a [Pixi](https://pixi.sh) environment that holds
+the same linters CI uses, so [install Pixi](/docs/getting-started/installation#install-pixi) first,
+then install the hooks once per clone:
+
+```bash
+pixi run -e lint lefthook install
+```
+
+From then on, every commit runs uncrustify and cpplint on the C++ files you staged, flake8 and pep257
+on the Python files, and xmllint on the XML files. It also checks the commit message. A commit that
+fails stops there, and the output says which file broke which rule.
+
+</Step>
+<Step>
+
+### Make a branch
+
+Start from an up to date `main`, and give the branch a name that says what it does:
+
+```bash
+git fetch upstream
+git switch -c fix/geozones-gps-origin upstream/main
+```
+
+</Step>
+<Step>
+
+### Commit your change
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org). Each one starts
+with a type, then optionally the package in parentheses, then a short description in the imperative:
+
+```txt
+feat(as2_core): add a filterable TF listener
+fix(as2_geozones): convert runtime GPS zones to the local frame
+docs(as2_behavior): fix the service type in the README
+```
+
+| Type | For |
+| --- | --- |
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `docs` | Documentation only |
+| `refactor` | A code change that neither fixes a bug nor adds a feature |
+| `perf` | A performance improvement |
+| `test` | Adding or fixing tests |
+| `style` | Formatting that doesn't change behavior |
+| `build`, `ci` | The build system, packaging or CI |
+| `chore` | Anything else, like dependency bumps |
+| `revert` | Reverting an earlier commit |
+
+Keep each commit to one logical change. Add or update tests along with the code they cover.
+
+</Step>
+<Step>
+
+### Build and test locally
+
+Build and test the packages you touched before you push. With the
+[Aerostack2 CLI](/docs/cli/build-and-test):
+
+```bash
+as2 build as2_core
+as2 test as2_core
+```
+
+`as2 test` runs the package's unit tests and the same linters as the hooks. To lint the whole
+repository, not only what you staged, run:
+
+```bash
+pixi run -e lint lefthook run pre-commit --all-files
+```
+
+</Step>
+<Step>
+
+### Open the pull request
+
+Push the branch and open a pull request against `main`:
+
+```bash
+git push -u origin fix/geozones-gps-origin
+```
+
+The title follows the same convention as the commits. When a pull request with several commits is
+squashed, its title becomes the commit message on `main`, so it matters more than any single commit.
+
+The description template asks for these.
+
+| Section | What to put in it |
+| --- | --- |
+| Issue(s) this addresses | The issue it fixes, written as `Closes #123` so GitHub closes it on merge |
+| ROS 2 version tested on | Humble, Jazzy, or both |
+| Aerial platform tested on | Where you flew it, like Gazebo or the multirotor simulator |
+| Description of contribution | What changed, in a few bullet points |
+| Documentation updates | The pages on this site that need to change with it |
+| Future work | Anything you left for later |
+
+If the work isn't ready for review yet, open it as a draft. Mark it ready when it is.
+
+</Step>
+<Step>
+
+### Pass the checks
+
+Every pull request runs these checks, and runs them again on every push.
+
+| Check | What it does |
+| --- | --- |
+| `humble`, `jazzy` | Builds the packages and runs their tests on each ROS 2 distribution |
+| `pixi` | Builds the Pixi environments on Linux and macOS |
+| `docker-build` | Builds the Docker images |
+
+A bot also labels the pull request with the packages it touches, and the
+[code owners](https://github.com/aerostack2/aerostack2/blob/main/.github/CODEOWNERS) of those
+packages are asked to review it. If a check fails, open its log from the pull request, fix the cause
+and push again.
+
+</Step>
+<Step>
+
+### Respond to the review
+
+Reviewers leave comments on the changes. Answer each one, push new commits with the fixes, and
+resolve the thread once it's addressed. Pushing more commits is fine, since a maintainer can squash
+them when merging.
+
+Keep the branch up to date with `main` if it falls behind or conflicts:
+
+```bash
+git fetch upstream
+git rebase upstream/main
+git push --force-with-lease
+```
+
+</Step>
+<Step>
+
+### Merge
+
+Once the checks pass and the reviewers approve, a maintainer merges it, by squashing or rebasing it
+onto `main`. The branch is deleted after the merge.
+
+If your change affects how Aerostack2 is used, update this documentation too, in
+[aerostack2/aerostack2.dev](https://github.com/aerostack2/aerostack2.dev).
+
+</Step>
+</Steps>

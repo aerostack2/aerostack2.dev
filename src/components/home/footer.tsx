@@ -12,15 +12,14 @@ const columns: { title: string; links: [string, string][] }[] = [
       ["Concepts", "/docs/concepts"],
       ["Examples", "/docs/examples"],
       ["Aerial platforms", "/docs/aerial-platforms"],
-      ["Behaviors", "/docs/behaviors"],
+      ["Behaviors", "/docs/concepts/behaviors"],
       ["Missions", "/docs/concepts/missions"],
     ],
   },
   {
     title: "Build",
     links: [
-      ["Develop guide", "/docs/develop-guide"],
-      ["Tutorials", "/docs/tutorials"],
+      ["Develop", "/docs/develop"],
       ["Plugins", "/docs/plugins"],
       ["ROS 2 interfaces", "/docs/ros2-interfaces"],
       ["CLI", "/docs/cli"],

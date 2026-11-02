@@ -9,7 +9,6 @@ import {
   FlaskConical,
   Gamepad2,
   GitFork,
-  GraduationCap,
   Hammer,
   Layers,
   MessagesSquare,
@@ -20,6 +19,7 @@ import {
   Route,
   Star,
   Tag,
+  Terminal,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
@@ -57,19 +57,20 @@ const learn: MenuItem[] = [
     href: "/docs/examples",
   },
   {
-    icon: <GraduationCap />,
-    title: "Tutorials",
-    description: "Build a platform, a behavior or a plugin step by step.",
-    href: "/docs/tutorials",
+    icon: <Workflow />,
+    title: "Behaviors",
+    description: "Take off, land, follow paths, avoid obstacles and more.",
+    href: "/docs/concepts/behaviors",
   },
 ];
 
 const build: MenuItem[] = [
   {
     icon: <Hammer />,
-    title: "Develop guide",
-    description: "Write your own packages, plugins and behaviors.",
-    href: "/docs/develop-guide",
+    title: "Develop",
+    description:
+      "Set up the code, then build a platform, a behavior or a plugin.",
+    href: "/docs/develop",
   },
   {
     icon: <Puzzle />,
@@ -78,10 +79,10 @@ const build: MenuItem[] = [
     href: "/docs/plugins",
   },
   {
-    icon: <Workflow />,
-    title: "Behaviors",
-    description: "Take off, land, follow paths, avoid obstacles and more.",
-    href: "/docs/behaviors",
+    icon: <Terminal />,
+    title: "CLI",
+    description: "Build, test and move around a source workspace.",
+    href: "/docs/cli",
   },
   {
     icon: <Route />,
@@ -304,7 +305,7 @@ export function NavMenus({ repoStats }: { repoStats: RepoStats | null }) {
                   <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" />
                 </MenuLink>
                 <MenuLink
-                  href="/docs/tutorials/aerial-platform"
+                  href="/docs/develop/aerial-platform"
                   className="group flex items-center gap-1 text-fd-muted-foreground transition-colors hover:text-fd-foreground"
                 >
                   Your drone isn't listed? Write a platform

@@ -1,0 +1,21 @@
+{
+  "title": "Develop",
+  "icon": "Code2",
+  "pages": [
+    "index",
+    "---Getting set up---",
+    "setting-code",
+    "new-package",
+    "---Contributing---",
+    "issues",
+    "pull-requests",
+    "---Tutorials---",
+    "aerial-platform",
+    "behavior",
+    "controller-plugin",
+    "estimator-plugin",
+    "follow-reference-plugin",
+    "trajectory-generation-plugin",
+    "gazebo-assets"
+  ]
+}

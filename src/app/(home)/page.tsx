@@ -92,15 +92,15 @@ const missionWays = [
 const nextSteps = [
   {
     label: "Guide",
-    title: "Develop guide",
-    body: "Write your own packages, plugins and behaviors.",
-    href: "/docs/develop-guide",
+    title: "Develop",
+    body: "Set up the code, then build a platform, a behavior or a plugin step by step.",
+    href: "/docs/develop",
   },
   {
-    label: "Tutorials",
-    title: "Tutorials",
-    body: "Build a platform, a behavior, or a controller or estimator plugin step by step.",
-    href: "/docs/tutorials",
+    label: "Reference",
+    title: "Plugins",
+    body: "Every plugin that ships with Aerostack2, and how to pick one.",
+    href: "/docs/plugins",
   },
   {
     label: "Guide",

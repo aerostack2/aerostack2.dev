@@ -92,12 +92,12 @@ The plugins are chosen in the configuration:
 | Package | Behaviors |
 | --- | --- |
 | `as2_behaviors_motion` | Take off, land, go to, follow path, follow reference |
-| `as2_behaviors_trajectory_generation` | [Polynomial trajectory generation](/docs/behaviors/trajectory-generation) |
+| `as2_behaviors_trajectory_generation` | [Polynomial trajectory generation](/docs/plugins/trajectory-generators) |
 | `as2_behaviors_path_planning` | Navigate to a point around obstacles, with A* or Voronoi |
-| `as2_behaviors_object_perception` | [Detect objects](/docs/behaviors/perception), such as ArUco markers |
-| `as2_behaviors_payload` | [Point a gimbal and drive a gripper](/docs/behaviors/payload) |
-| `as2_behaviors_swarm_flocking` | [Fly several drones as a swarm](/docs/behaviors/swarm-flocking) |
-| `as2_behaviors_param_estimation` | [Estimate the drone's mass and external forces](/docs/behaviors/param-estimation) |
+| `as2_behaviors_object_perception` | [Detect objects](/docs/plugins/perception), such as ArUco markers |
+| `as2_behaviors_payload` | [Point a gimbal and drive a gripper](/docs/plugins/payload) |
+| `as2_behaviors_swarm_flocking` | [Fly several drones as a swarm](#swarm-flocking) |
+| `as2_behaviors_param_estimation` | [Estimate the drone's mass and external forces](#parameter-estimation) |
 | `as2_behaviors_platform` | Arm and switch to offboard, as behaviors |
 
 The motion behaviors are launched together:
@@ -107,6 +107,38 @@ ros2 launch as2_behaviors_motion motion_behaviors_launch.py \
   namespace:=drone0 \
   config_file:=config/config.yaml
 ```
+
+## Swarm flocking
+
+The swarm flocking behavior flies several drones in formation around a virtual centroid. It runs once
+for the whole swarm, in the `Swarm` namespace, rather than once per drone.
+
+Its goal gives the centroid's pose in a frame to follow, each drone's place relative to the
+centroid, and the namespaces of the drones. The behavior adds the centroid and every drone's place to
+the TF tree, and starts each drone's follow reference behavior on its place. When the followed frame
+moves, the whole formation moves with it.
+
+A new formation can be sent on `dynamic_swarm_formation` while it flies. Every drone in the swarm
+needs its follow reference behavior running.
+
+## Parameter estimation
+
+Two behaviors estimate the drone's physical parameters in flight. Both compare the thrust the
+controller commands, on `actuator_command/thrust`, with the vertical acceleration the IMU measures.
+
+- **Mass estimation** divides the thrust by the acceleration, filters the result and keeps it
+  between `minimum_mass` and `maximum_mass`.
+- **Force estimation** compares the thrust with the mass times the acceleration. The gap is the force
+  the drone isn't accounting for, like an unmodelled payload.
+
+With `controller_node` and the parameter names set, they write their estimate into the controller's
+parameters, so a controller that depends on the mass, like the differential flatness controller,
+stays tuned. Otherwise they only publish it on their debug topics under `debug/param_estimation/`.
+
+<Callout type="warn" title="Set a mass range">
+  The default configuration sets both `minimum_mass` and `maximum_mass` to `0.6`, so every estimate
+  is clamped to 0.6 kg. Set them to a range that fits your drone.
+</Callout>
 
 ## Writing a behavior
 
@@ -122,4 +154,4 @@ type. The server takes care of the interfaces and the states, and calls these me
 | `on_run` | On every cycle while running, at `run_frequency`, which is 10 Hz by default. It fills the feedback and returns whether the behavior is still running, succeeded or failed. |
 | `on_execution_end` | The behavior ends for any reason, with how it ended. |
 
-The [behavior tutorial](/docs/tutorials/behavior) walks through a complete one.
+The [behavior tutorial](/docs/develop/behavior) walks through a complete one.

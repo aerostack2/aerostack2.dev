@@ -1,0 +1,85 @@
+---
+title: Opening an issue
+description: Where to report a bug or ask for a feature, and how to write an issue the team can act on.
+icon: CircleDot
+---
+
+Issues are how bugs and feature requests reach the team. A good one says what went wrong and how to
+make it happen again, so someone can fix it without a long back and forth.
+
+## Where to open it
+
+| You want to | Open it in |
+| --- | --- |
+| Report a bug or ask for a feature in Aerostack2 | [aerostack2/aerostack2 issues](https://github.com/aerostack2/aerostack2/issues) |
+| Report a problem with a platform that lives in its own repository, like Pixhawk or Crazyflie | That platform's repository, linked from its page under [Aerial platforms](/docs/aerial-platforms) |
+| Ask how to do something, or share what you built | [GitHub Discussions](https://github.com/aerostack2/aerostack2/discussions) |
+| Report a mistake in this documentation | [aerostack2/aerostack2.dev issues](https://github.com/aerostack2/aerostack2.dev/issues) |
+
+Search the open and closed issues first. If someone has already reported the same thing, add what
+you know there instead of opening a new one.
+
+## Choose a template
+
+New issues start from one of two templates.
+
+| Template | Use it for | Label |
+| --- | --- | --- |
+| Bug report | Something that doesn't work as documented, or crashes | `bug` |
+| Feature request | Something Aerostack2 should do but doesn't yet | `enhancement` |
+
+## Name it after the package
+
+Titles start with the package in square brackets, followed by a short description of the problem:
+
+```txt
+[as2_geozones] Runtime GPS geozones are not converted to local frame
+[as2_platform_multirotor_simulator] Gimbal still present when its pub_freq is zero
+```
+
+The package name tells the team who should look at it. Use `aerostack2` when the issue is about the
+whole stack, like a release.
+
+## Write a bug report
+
+The bug report template asks for these fields.
+
+| Field | What to put in it |
+| --- | --- |
+| ROS 2 version | Humble or Jazzy |
+| Version | The Aerostack2 version you run. If yours isn't listed, pick the closest and give the exact one in the description |
+| Installation | Binaries, source or Docker |
+| What happened? | What you saw, and what you expected instead |
+| How to reproduce your issue? | The steps that make it happen, starting from a clean launch |
+| Relevant log output | The terminal output around the error |
+
+To find the exact version you run:
+
+```bash
+ros2 pkg xml aerostack2 --tag version
+```
+
+On a source install, also give the commit you built with `git -C ~/aerostack2_ws/src/aerostack2 rev-parse --short HEAD`.
+
+The steps to reproduce matter most. The best ones start from a project the team can run too, like
+the [Quickstart](/docs/getting-started/quickstart) project, and list the launch commands, the
+configuration you changed and the mission you ran. Say which platform you flew on, since many bugs
+only show on one.
+
+Paste logs as text, not screenshots, and include the lines before the error, not just the error
+itself. When a node crashes, its last messages usually say why.
+
+## Write a feature request
+
+Describe the problem before the solution. "I need the drone to land on a moving platform" tells the
+team more than "add a speed parameter to land", and leaves room for a better answer. The second
+field is for how you'd build it, if you have ideas, and the alternatives you've considered.
+
+If you plan to build it yourself, say so. The team can then tell you where it should live before
+you write it, which saves rework in the [pull request](/docs/develop/pull-requests).
+
+## After you open it
+
+A maintainer may label the issue with the area it touches, like `behavior` or `state-estimator`, and
+ask for anything that's missing. Issues labelled `good first issue` are small and well understood,
+which makes them a good place to start contributing.
