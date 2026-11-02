@@ -1,5 +1,10 @@
 {
   "title": "User Interfaces",
   "icon": "Gamepad2",
-  "pages": ["index", "keyboard-teleoperation", "alphanumeric-viewer", "visualization"]
+  "pages": [
+    "index",
+    "keyboard-teleoperation",
+    "alphanumeric-viewer",
+    "visualization"
+  ]
 }
