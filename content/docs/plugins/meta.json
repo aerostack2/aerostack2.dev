@@ -3,13 +3,16 @@
   "icon": "Puzzle",
   "pages": [
     "index",
+    "---Control---",
     "motion-controller",
     "state-estimator",
+    "---Behaviors---",
     "motion-behaviors",
     "trajectory-generators",
-    "path-planning",
-    "map-server",
     "payload",
-    "perception"
+    "perception",
+    "---Navigation---",
+    "path-planning",
+    "map-server"
   ]
 }

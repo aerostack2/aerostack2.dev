@@ -3,11 +3,13 @@
   "icon": "FlaskConical",
   "pages": [
     "index",
+    "---Simulation---",
     "gazebo",
     "multirotor-simulator",
+    "---Real drones---",
     "crazyflie",
-    "dji",
+    "tello",
     "pixhawk",
-    "tello"
+    "dji"
   ]
 }

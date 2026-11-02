@@ -3,14 +3,17 @@
   "icon": "PlaneTakeoff",
   "pages": [
     "index",
+    "---Simulators---",
     "gazebo-simulation",
     "multirotor-simulator",
+    "---Flight controllers---",
     "pixhawk",
     "mavlink",
+    "betaflight",
+    "---Drones---",
     "crazyflie",
-    "dji-osdk",
-    "dji-psdk",
     "ryze-tello",
-    "betaflight"
+    "dji-osdk",
+    "dji-psdk"
   ]
 }

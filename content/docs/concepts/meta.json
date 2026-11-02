@@ -3,12 +3,15 @@
   "icon": "Layers",
   "pages": [
     "index",
+    "---Foundations---",
     "architecture",
     "as2-communications",
     "frames",
+    "---Components---",
     "aerial-platform",
     "motion-controller",
     "state-estimator",
+    "---Missions---",
     "behaviors",
     "missions"
   ]

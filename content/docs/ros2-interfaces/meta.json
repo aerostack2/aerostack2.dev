@@ -3,7 +3,9 @@
   "icon": "Radio",
   "pages": [
     "index",
+    "---Messages---",
     "as2-msgs",
+    "---Components---",
     "aerial-platform",
     "motion-controller",
     "state-estimator",
