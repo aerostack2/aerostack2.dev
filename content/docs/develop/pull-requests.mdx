@@ -102,8 +102,8 @@ as2 build as2_core
 as2 test as2_core
 ```
 
-`as2 test` runs the package's unit tests and the same linters as the hooks. To lint the whole
-repository, not only what you staged, run:
+`as2 test` runs the package's unit tests and its linters, which check more than the hooks do, like
+the copyright header. To lint the whole repository, not only what you staged, run:
 
 ```bash
 pixi run -e lint lefthook run pre-commit --all-files

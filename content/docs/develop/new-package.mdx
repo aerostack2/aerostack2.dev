@@ -1,8 +1,170 @@
 ---
-title: Developing a New Package
+title: Creating a package
+description: How an Aerostack2 package is laid out, the style its code follows, and where to register it.
 icon: PackagePlus
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_develop_guide/_develop_guide/_develop_new_pkg.rst`.
-</Callout>
+Aerostack2 packages share a layout and a set of conventions, so anyone on the team can find their
+way around a new one. The easiest start is to copy a small package that's close to yours, like
+`as2_geozones` for a C++ node or `as2_keyboard_teleoperation` for Python, and rename it.
+
+## Naming
+
+Every Aerostack2 package is named `as2_` followed by what it does, in snake case, like `as2_core`,
+`as2_state_estimator` or `as2_platform_gazebo`. Packages of the same kind share a second prefix, such
+as `as2_platform_` for aerial platforms and `as2_behaviors_` for behaviors. The `aerostack2`
+metapackage, which installs all the others, is the one exception.
+
+The examples on this page use `as2_example`.
+
+## Layout
+
+<Tabs items={["C++", "Python"]}>
+<Tab value="C++">
+
+<FileTree>
+  <TreeFolder name="as2_example">
+    <TreeFile name="CMakeLists.txt" note="How the package is built and tested" />
+    <TreeFile name="package.xml" note="Name, version, license and dependencies" />
+    <TreeFile name="pixi.toml" note="The package's Pixi build" />
+    <TreeFile name="README.md" />
+    <TreeFolder name="config" note="Default parameters" />
+    <TreeFolder name="include">
+      <TreeFolder name="as2_example">
+        <TreeFile name="as2_example.hpp" note="Public headers" />
+      </TreeFolder>
+    </TreeFolder>
+    <TreeFolder name="launch" note="Launch files" />
+    <TreeFolder name="src">
+      <TreeFile name="as2_example.cpp" note="The node's code, built into a library" />
+      <TreeFile name="as2_example_node.cpp" note="Only main, which runs the node" />
+    </TreeFolder>
+    <TreeFolder name="tests">
+      <TreeFile name="CMakeLists.txt" note="Picks up the tests by suffix" />
+      <TreeFile name="as2_example_gtest.cpp" note="A GoogleTest test, run by colcon test" />
+      <TreeFile name="as2_example_test.cpp" note="An executable you run by hand" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+The node's `main` lives in its own `_node.cpp` file. Everything else is built into a library, so
+the tests can link against it.
+
+</Tab>
+<Tab value="Python">
+
+<FileTree>
+  <TreeFolder name="as2_example">
+    <TreeFile name="package.xml" note="Name, version, license and dependencies" />
+    <TreeFile name="pixi.toml" note="The package's Pixi build" />
+    <TreeFile name="README.md" />
+    <TreeFile name="setup.cfg" note="Where the executables are installed" />
+    <TreeFile name="setup.py" note="The modules, data files and entry points" />
+    <TreeFolder name="as2_example">
+      <TreeFile name="__init__.py" />
+      <TreeFile name="as2_example.py" note="The node's code" />
+    </TreeFolder>
+    <TreeFolder name="launch" note="Launch files" />
+    <TreeFolder name="resource">
+      <TreeFile name="as2_example" note="Empty. Registers the package with ament" />
+    </TreeFolder>
+    <TreeFolder name="tests">
+      <TreeFile name="test_copyright.py" note="License headers" />
+      <TreeFile name="test_flake8.py" note="PEP 8 and import order" />
+      <TreeFile name="test_pep257.py" note="Docstrings" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Tab>
+</Tabs>
+
+A package with a single node names the node after itself. Tests go in `tests`, not the ROS 2
+default of `test`.
+
+## Build files
+
+`package.xml` uses format 3 and the BSD-3-Clause license, and its version matches the other
+packages, since every package is released together. C++ packages need these test dependencies:
+
+```xml title="package.xml"
+<test_depend>ament_lint_auto</test_depend>
+<test_depend>ament_lint_common</test_depend>
+<test_depend>ament_cmake_gtest</test_depend>
+```
+
+`CMakeLists.txt` builds with C++17 and defaults to a release build. Its testing block runs the
+linters and adds the `tests` folder:
+
+```cmake title="CMakeLists.txt"
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+  add_subdirectory(tests)
+endif()
+```
+
+`tests/CMakeLists.txt` picks up test files by their suffix. A file ending in `_gtest.cpp` becomes a
+GoogleTest test that `colcon test` runs. A file ending in `_test.cpp` becomes a plain executable,
+for checks you run by hand. Copy it from an existing package, such as
+[as2_geozones](https://github.com/aerostack2/aerostack2/blob/main/as2_utilities/as2_geozones/tests/CMakeLists.txt).
+
+## Code style
+
+C++ follows the [Google C++ style guide](https://google.github.io/styleguide/cppguide.html) and
+Python follows [PEP 8](https://peps.python.org/pep-0008/) and
+[PEP 257](https://peps.python.org/pep-0257/), as in the
+[ROS 2 code style](https://docs.ros.org/en/humble/The-ROS2-Project/Contributing/Code-Style-Language-Versions.html).
+The [git hooks and linters](/docs/develop/setting-code#install-the-git-hooks) check most of it.
+
+Every file starts with the BSD 3-Clause license text, which the copyright test checks. Copy it from
+any file in the repository and set the year. After it, C++ files have a Doxygen header:
+
+```cpp title="src/as2_example.cpp"
+/**
+ * @file as2_example.cpp
+ *
+ * What this file implements.
+ *
+ * @author Your Name
+ */
+```
+
+Python modules open with a docstring, then the license, then these fields:
+
+```python title="as2_example/as2_example.py"
+"""What this module does."""
+
+# Copyright 2026 Universidad Politécnica de Madrid
+# ...
+
+__authors__ = 'Your Name'
+__copyright__ = 'Copyright (c) 2026 Universidad Politécnica de Madrid'
+__license__ = 'BSD-3-Clause'
+```
+
+Document every public class and function in the headers, in Doxygen style. Log with the ROS 2 logging macros, like `RCLCPP_INFO`, not `std::cout` or `print`.
+
+## Register the package
+
+A new package isn't built, released or tested until the repository knows about it. Add it to these
+files.
+
+| File | What to add |
+| --- | --- |
+| `as2_example/pixi.toml` | The package's Pixi build, with its Aerostack2 dependencies as paths. Copy it from a similar package |
+| `aerostack2/package.xml` | An `exec_depend` on the package, so the `aerostack2` metapackage installs it |
+| `aerostack2/pixi.toml` | The package under `extra-package-mappings` and under `run-dependencies`, with its path |
+| `.github/workflows/build-humble.yaml`, `build-jazzy.yaml` and `codecov_test.yaml` | The package name in the `package-name` list, so CI builds and tests it |
+| `.github/labeler.yml` | A label for its folder, if it doesn't fall under an existing one |
+| `.github/CODEOWNERS` | Its reviewers, if they differ from those of the folder it sits in |
+
+## Build and test it
+
+```bash
+as2 build as2_example
+as2 test -v as2_example
+```
+
+`-v` prints the full output, so you can see which test or linter failed and why. When everything
+passes, [open a pull request](/docs/develop/pull-requests).

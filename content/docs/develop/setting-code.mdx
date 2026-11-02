@@ -1,8 +1,147 @@
 ---
-title: Setting up the Code
+title: Setting up
+description: Prepare a clone of Aerostack2 for development, with the git hooks, the linters and your editor.
 icon: FolderCog
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_develop_guide/_develop_guide/_setting_code.rst`.
+To work on Aerostack2 you need a source checkout, the git hooks that check your code before each
+commit, and an editor that follows the same style rules. This page sets up all three.
+
+## Get the code
+
+If you're not a member of the Aerostack2 organization, clone your fork instead of the main
+repository, as [Opening a pull request](/docs/develop/pull-requests) explains. How you build it
+depends on your system.
+
+<Tabs items={["Linux", "macOS"]}>
+<Tab value="Linux">
+
+Build Aerostack2 in a colcon workspace, as in
+[Installation from source](/docs/getting-started/installation#from-source). Export the compile
+commands when you build, so your editor knows how each C++ file is compiled:
+
+```bash
+cd ~/aerostack2_ws
+colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+```
+
+Each package then has a `compile_commands.json` in its build folder. Most editors read a single file
+at the root of the workspace, so merge them:
+
+```bash
+jq -s 'add' build/*/compile_commands.json > compile_commands.json
+```
+
+You can also use [Pixi](/docs/getting-started/installation#pixi) on Linux, as described for macOS.
+
+</Tab>
+<Tab value="macOS">
+
+ROS 2 has no official binaries for macOS, so Aerostack2 runs there through
+[Pixi](/docs/getting-started/installation#pixi), which installs ROS 2 from RoboStack, on Apple
+silicon. Clone the repository and build
+the environment:
+
+```bash
+git clone https://github.com/<your-user>/aerostack2.git
+cd aerostack2
+pixi install
+```
+
+Pixi builds every package itself, from the files in your clone. It tracks each package's sources,
+so after you change code, running `pixi install` again rebuilds what changed. `pixi shell` then
+opens a shell with your build of Aerostack2.
+
+The Pixi environment doesn't include colcon, so `as2 build` and `as2 test` don't work in it, and
+neither do the package tests. The git hooks below work on macOS too, and the pull request's checks
+run the tests on Linux.
+
+</Tab>
+</Tabs>
+
+## Install the git hooks
+
+Aerostack2 checks style with the same linters ROS 2 uses, from
+[ament_lint](https://github.com/ament/ament_lint). They run as git hooks, managed by
+[lefthook](https://lefthook.dev), inside a Pixi environment called `lint`. That environment holds
+only the linters, so it installs quickly and doesn't build Aerostack2, whichever way you installed
+it.
+
+[Install Pixi](/docs/getting-started/installation#install-pixi) if you don't have it, then install
+the hooks once in your clone:
+
+```bash
+cd ~/aerostack2_ws/src/aerostack2
+pixi run -e lint lefthook install
+```
+
+From then on, every commit runs these checks on the files you staged.
+
+| Hook | Checks | Files |
+| --- | --- | --- |
+| `commitlint` | The message follows [Conventional Commits](/docs/develop/pull-requests#commit-your-change) | The commit message |
+| `uncrustify` | Formatting | C++ |
+| `cpplint` | The Google C++ style rules | C++ |
+| `flake8` | PEP 8, import order and quotes | Python |
+| `pep257` | Docstrings | Python |
+| `xmllint` | Well-formed XML that matches its schema | XML |
+
+Folders whose names start with `_` or `.`, third-party code and a few generated files are skipped,
+the same as in the package tests.
+
+## Run the linters yourself
+
+uncrustify can fix the formatting it complains about. Pass it the files or folders to fix:
+
+```bash
+pixi run -e lint ament_uncrustify --reformat as2_core/src
+```
+
+To check the whole repository instead of what you staged:
+
+```bash
+pixi run -e lint lefthook run pre-commit --all-files
+```
+
+The package tests run a few more linters than the hooks do. `as2 test` adds copyright, which checks
+the license header of every file, cppcheck, and lint_cmake for the `CMakeLists.txt`.
+
+<Callout title="Format with the Pixi uncrustify">
+  The `lint` environment pins uncrustify 0.72, the version Humble ships. Newer releases, like the
+  ones Jazzy and Homebrew ship, format some code differently, so formatting with your system's
+  uncrustify can produce changes the hooks then reject.
 </Callout>
+
+## Set up your editor
+
+Your editor can apply the same rules as you type. The configuration files the linters use are inside
+the `lint` environment:
+
+```bash
+find .pixi/envs/lint -name ament_code_style.cfg -o -name ament_flake8.ini
+```
+
+| Tool | Configuration |
+| --- | --- |
+| uncrustify | `ament_uncrustify/configuration/ament_code_style.cfg`, run with `.pixi/envs/lint/bin/uncrustify` |
+| flake8 | `ament_flake8/configuration/ament_flake8.ini`, with a line length of 99 |
+| cpplint | A line length of 100, with the filters in `ament_cpplint/main.py` |
+
+In VS Code, with the C/C++, Flake8 and Uncrustify extensions, these settings point them at the
+compile commands and the configuration files:
+
+```json title=".vscode/settings.json"
+{
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
+  "[cpp]": {
+    "editor.defaultFormatter": "zachflower.uncrustify",
+    "editor.formatOnSave": true
+  },
+  "uncrustify.executablePath.linux": "<path to .pixi/envs/lint/bin/uncrustify>",
+  "uncrustify.configPath.linux": "<path to ament_code_style.cfg>",
+  "flake8.args": ["--config=<path to ament_flake8.ini>"]
+}
+```
+
+Replace the paths with absolute ones, using what `find` printed. On macOS the uncrustify settings end
+in `.osx` instead of `.linux`.

@@ -1,9 +1,38 @@
 ---
 title: Overview
+description: How to change Aerostack2, contribute it back, and extend it with your own components.
 icon: Compass
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_develop_guide/index.rst` and
-  `docs/_09_development/_tutorials/index.rst`.
-</Callout>
+This section is for working on Aerostack2 itself, whether that's fixing a bug, contributing a
+feature, or writing a component of your own for your drone or research.
+
+Aerostack2 is made to be extended. Most of what a drone does comes from plugins and nodes built on a
+few base classes, so you can add a new platform, controller, estimator or behavior without touching
+the rest of the stack. The tutorials walk through each of them.
+
+## Getting set up
+
+<Cards>
+  <Card title="Setting up" href="/docs/develop/setting-code" description="A source checkout, the git hooks that check style, and your editor." />
+  <Card title="Creating a package" href="/docs/develop/new-package" description="How a package is laid out and where to register it." />
+</Cards>
+
+## Contributing
+
+<Cards>
+  <Card title="Opening an issue" href="/docs/develop/issues" description="Report a bug or ask for a feature." />
+  <Card title="Opening a pull request" href="/docs/develop/pull-requests" description="Get a change into Aerostack2, from the first commit to the merge." />
+</Cards>
+
+## Tutorials
+
+<Cards>
+  <Card title="Aerial platform" href="/docs/develop/aerial-platform" description="Connect a new drone or simulator." />
+  <Card title="Behavior" href="/docs/develop/behavior" description="Add a new skill the drone can perform." />
+  <Card title="Controller plugin" href="/docs/develop/controller-plugin" description="Add a control law to the motion controller." />
+  <Card title="Estimator plugin" href="/docs/develop/estimator-plugin" description="Add a way to estimate the drone's state." />
+  <Card title="Follow reference plugin" href="/docs/develop/follow-reference-plugin" description="Change how the follow reference behavior tracks its target." />
+  <Card title="Trajectory generation plugin" href="/docs/develop/trajectory-generation-plugin" description="Add a planner that turns waypoints into trajectories." />
+  <Card title="Gazebo assets" href="/docs/develop/gazebo-assets" description="Add worlds, drone models and sensors to the simulation." />
+</Cards>
