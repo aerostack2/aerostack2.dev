@@ -4,7 +4,6 @@ import { NavigationMenu } from "@base-ui/react/navigation-menu";
 import {
   ArrowRight,
   Boxes,
-  Braces,
   ChevronDown,
   CircleDot,
   FlaskConical,
@@ -18,6 +17,7 @@ import {
   Puzzle,
   Quote,
   Rocket,
+  Route,
   Star,
   Tag,
   Workflow,
@@ -84,10 +84,10 @@ const build: MenuItem[] = [
     href: "/docs/behaviors",
   },
   {
-    icon: <Braces />,
-    title: "Python API",
-    description: "Everything DroneInterface can do.",
-    href: "/docs/api",
+    icon: <Route />,
+    title: "Missions",
+    description: "Python, behavior trees and the mission interpreter.",
+    href: "/docs/concepts/missions",
   },
   {
     icon: <Network />,

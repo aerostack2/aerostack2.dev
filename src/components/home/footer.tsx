@@ -13,6 +13,7 @@ const columns: { title: string; links: [string, string][] }[] = [
       ["Examples", "/docs/examples"],
       ["Aerial platforms", "/docs/aerial-platforms"],
       ["Behaviors", "/docs/behaviors"],
+      ["Missions", "/docs/concepts/missions"],
     ],
   },
   {
@@ -21,7 +22,6 @@ const columns: { title: string; links: [string, string][] }[] = [
       ["Develop guide", "/docs/develop-guide"],
       ["Tutorials", "/docs/tutorials"],
       ["Plugins", "/docs/plugins"],
-      ["Python API", "/docs/api"],
       ["ROS 2 interfaces", "/docs/ros2-interfaces"],
       ["CLI", "/docs/cli"],
     ],

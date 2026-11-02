@@ -103,10 +103,10 @@ const nextSteps = [
     href: "/docs/tutorials",
   },
   {
-    label: "Reference",
-    title: "Python API",
-    body: "Everything DroneInterface can do.",
-    href: "/docs/api",
+    label: "Guide",
+    title: "Missions",
+    body: "Write a mission in Python, as a behavior tree or as JSON.",
+    href: "/docs/concepts/missions",
   },
 ];
 
