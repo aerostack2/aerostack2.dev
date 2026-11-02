@@ -1,8 +1,48 @@
 ---
-title: Roadmaps
+title: Roadmap
+description: What Aerostack2 1.2.0 brings, and what's being discussed for after it.
 icon: Map
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_10_roadmaps/index.rst`.
-</Callout>
+## 1.2.0
+
+The next release is tracked in the
+[v1.2.0 milestone](https://github.com/aerostack2/aerostack2/milestone/2). Most
+of it is already on main.
+
+- **ROS 2 Jazzy.** Every package builds for Jazzy as well as Humble.
+- **Pixi packages.** Aerostack2 installs with Pixi on Linux and macOS, and the
+  packages are [published on prefix.dev](https://github.com/aerostack2/aerostack2/pull/1021) with each release.
+- **Motion controller.** A new [geometric controller](https://github.com/aerostack2/aerostack2/pull/1001), and a
+  [parameter contract](https://github.com/aerostack2/aerostack2/pull/1000) that every controller plugin follows.
+- **State estimator.** The estimator is
+  [reworked so plugins no longer publish the state](https://github.com/aerostack2/aerostack2/pull/980) themselves, and
+  [simple_ekf](https://github.com/aerostack2/aerostack2/pull/1002) adds a 15-state EKF.
+- **Command frames.** A platform [declares the frames](https://github.com/aerostack2/aerostack2/pull/990) its commands
+  are in, and [direct command handlers](https://github.com/aerostack2/aerostack2/pull/993) send commands straight to it.
+- **Trajectory generation.** The trajectory generator is now a
+  [plugin](https://github.com/aerostack2/aerostack2/pull/941), with plugins for
+  [mav_trajectory_generation](https://github.com/aerostack2/aerostack2/pull/942), [GCOPTER](https://github.com/aerostack2/aerostack2/pull/943) and a
+  [jerk-limited generator](https://github.com/aerostack2/aerostack2/pull/944).
+- **Perception and payload.** A new
+  [object perception package](https://github.com/aerostack2/aerostack2/pull/910) with a modular pipeline, and
+  [payload behaviors](https://github.com/aerostack2/aerostack2/pull/900) such as pointing a gimbal.
+- **Behaviors.** A behavior can [pause itself](https://github.com/aerostack2/aerostack2/pull/940).
+
+## Under discussion
+
+These ideas are open on
+[GitHub Discussions](https://github.com/aerostack2/aerostack2/discussions/categories/ideas). None of them is
+planned yet, so join in if one matters to you.
+
+- [A new motion controller architecture](https://github.com/aerostack2/aerostack2/discussions/938), and
+  [less duplicated code](https://github.com/aerostack2/aerostack2/discussions/927) between the motion controller and the
+  multirotor simulator
+- [A trajectory splines interface](https://github.com/aerostack2/aerostack2/discussions/936) in as2_msgs
+- [Multiplatform support](https://github.com/aerostack2/aerostack2/discussions/920)
+- [Path planning for fixed-wing aircraft](https://github.com/aerostack2/aerostack2/discussions/934) and the
+  [future of the path planning behavior](https://github.com/aerostack2/aerostack2/discussions/922)
+- [A more modular behavior tree](https://github.com/aerostack2/aerostack2/discussions/896)
+- [Moving the CLI from Bash to Python](https://github.com/aerostack2/aerostack2/discussions/916)
+- [WildBridge for DJI drones](https://github.com/aerostack2/aerostack2/discussions/913) and
+  [support for the DJI Matrice 400](https://github.com/aerostack2/aerostack2/discussions/966)
