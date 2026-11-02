@@ -139,3 +139,34 @@ export function AccordionFolder({
     </ControlledFolder>
   );
 }
+
+/**
+ * Matches `getItemOffset` in `layouts/docs/slots/sidebar`, which DocsLayout
+ * doesn't export, so the label lines up with the page rows at the same depth.
+ */
+function itemOffset(depth: number) {
+  return `calc(${2 + 3 * depth} * var(--spacing))`;
+}
+
+/**
+ * A `---Label---` entry in a `meta.json`, drawn as a small uppercase label
+ * followed by a rule that runs to the end of the row.
+ */
+export function SidebarSeparator({ item }: { item: PageTree.Separator }) {
+  const depth = Base.useFolderDepth();
+
+  return (
+    <Base.SidebarSeparator
+      className={
+        "mt-3 mb-1 flex items-center gap-3 pe-2 text-[0.6875rem] font-medium" +
+        " uppercase tracking-wider text-fd-muted-foreground/80" +
+        " after:h-px after:flex-1 after:bg-fd-border after:content-['']" +
+        " [&_svg]:size-3.5 [&_svg]:shrink-0"
+      }
+      style={{ paddingInlineStart: itemOffset(depth) }}
+    >
+      {item.icon}
+      {item.name}
+    </Base.SidebarSeparator>
+  );
+}

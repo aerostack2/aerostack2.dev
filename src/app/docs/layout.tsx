@@ -3,6 +3,7 @@ import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import {
   AccordionFolder,
   SidebarAccordion,
+  SidebarSeparator,
 } from "@/components/sidebar-accordion";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { baseOptions } from "@/lib/layout.shared";
@@ -68,6 +69,7 @@ export default function Layout({ children }: LayoutProps<"/docs">) {
           collapsible: false,
           components: {
             Folder: AccordionFolder,
+            Separator: SidebarSeparator,
           },
           // Async server component. The counts refresh once a day; left at its
           // default of a minute, every docs page would regenerate that often.
