@@ -1,8 +1,227 @@
 ---
 title: as2_msgs
+description: The messages, services and actions Aerostack2 defines, and where each one is used.
 icon: MessageSquare
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/as2_msgs/index.rst`.
-</Callout>
+`as2_msgs` holds the interface types Aerostack2 adds to the standard ROS 2 ones. Everything else
+uses `std_msgs`, `geometry_msgs`, `sensor_msgs` and the other common packages. The definitions are
+in the [as2_msgs package](https://github.com/aerostack2/aerostack2/tree/main/as2_msgs).
+
+```cpp
+#include <as2_msgs/msg/platform_info.hpp>
+#include <as2_msgs/action/takeoff.hpp>
+```
+
+```python
+from as2_msgs.msg import PlatformInfo
+from as2_msgs.action import Takeoff
+```
+
+## Platform and control
+
+| Type | What it carries | Used on |
+| --- | --- | --- |
+| `msg/PlatformInfo` | The platform's connection, arming, offboard, state and control mode | `platform/info` |
+| `msg/PlatformStatus` | A state of the platform state machine | Inside `PlatformInfo` |
+| `msg/PlatformStateMachineEvent` | An event for the platform state machine | Inside `SetPlatformStateMachineEvent` |
+| `msg/ControlMode` | A control mode and a yaw mode | Inside `PlatformInfo`, `ControllerInfo` and `SetControlMode` |
+| `msg/ControllerInfo` | The controller's input and output control modes | `controller/info` |
+| `msg/Thrust` | A collective thrust | `motion_reference/thrust`, `actuator_command/thrust` |
+| `msg/AlertEvent` | An alert, such as a kill switch | `alert_event` |
+| `srv/SetControlMode` | Asks for a control mode | `controller/set_control_mode`, `set_platform_control_mode` |
+| `srv/ListControlModes` | Returns the control modes a platform supports | `platform/list_control_modes` |
+| `srv/SetPlatformStateMachineEvent` | Sends an event and returns the new state | `platform/state_machine_event` |
+| `msg/Acro` | Body rates and a thrust vector | The Gazebo platform's bridge only |
+
+### PlatformInfo
+
+```txt title="msg/PlatformInfo.msg"
+std_msgs/Header header
+bool connected
+bool armed
+bool offboard
+as2_msgs/PlatformStatus status
+as2_msgs/ControlMode current_control_mode
+```
+
+### PlatformStatus and PlatformStateMachineEvent
+
+The two share some names but not their values. `LANDED` is `1` as a state and `5` as an event.
+
+| State | Value | | Event | Value |
+| --- | --- | --- | --- | --- |
+| `EMERGENCY` | `-1` | | `EMERGENCY` | `-1` |
+| `DISARMED` | `0` | | `ARM` | `0` |
+| `LANDED` | `1` | | `DISARM` | `1` |
+| `TAKING_OFF` | `2` | | `TAKE_OFF` | `2` |
+| `FLYING` | `3` | | `TOOK_OFF` | `3` |
+| `LANDING` | `4` | | `LAND` | `4` |
+| | | | `LANDED` | `5` |
+
+[Aerial platform](/docs/concepts/aerial-platform#the-state-machine) shows which event leads to
+which state.
+
+### ControlMode
+
+```txt title="msg/ControlMode.msg"
+std_msgs/Header header
+
+int8 NONE      = 0
+int8 YAW_ANGLE = 1  # rad
+int8 YAW_SPEED = 2  # rad/s
+int8 yaw_mode
+
+int8 UNSET            = 0
+int8 HOVER            = 1
+int8 POSITION         = 2  # x, y, z
+int8 SPEED            = 3  # vx, vy, vz
+int8 SPEED_IN_A_PLANE = 4  # vx, vy, z
+int8 ATTITUDE         = 5  # roll, pitch, yaw
+int8 BODY_RATES       = 6  # collective thrust and p, q, r
+int8 TRAJECTORY       = 7  # x, y, z, vx, vy, vz, ax, ay, az
+int8 control_mode
+```
+
+`ListControlModes` doesn't return `ControlMode` messages. It packs each mode into one byte, with
+other numbers than the message, and the control modes files of the platforms and controller plugins
+use the same bytes.
+
+| Bits | Holds | Values |
+| --- | --- | --- |
+| 7 to 4 | The control mode | Unset `0`, hover `1`, body rates `2`, attitude `3`, speed `4`, speed in a plane `5`, position `6`, trajectory `7` |
+| 3 to 2 | The yaw mode | Angle `0`, speed `1`, none `2` |
+| 1 to 0 | Nothing | Ignored |
+
+So `0b01000100` is speed with a yaw speed. `as2_core/utils/control_mode_utils.hpp` converts between
+the two forms.
+
+### AlertEvent
+
+```txt title="msg/AlertEvent.msg"
+int8 KILL_SWITCH     = -1
+int8 EMERGENCY_HOVER = -2
+int8 EMERGENCY_LAND  = -3
+int8 INFO_ALERT      = 0
+int8 FORCE_HOVER     = 1
+int8 FORCE_LAND      = 2
+int8 alert
+string description
+```
+
+Negative alerts are meant for the platform and positive ones for the rest of the stack. Only the
+kill switch and the emergency hover are acted on today, as
+[Alerts](/docs/ros2-interfaces/other-components#alerts) explains.
+
+## References and trajectories
+
+| Type | What it carries | Used on |
+| --- | --- | --- |
+| `msg/TrajectoryPoint` | One point of a trajectory, with its position, velocity, acceleration and yaw | Inside `TrajectorySetpoints` |
+| `msg/TrajectorySetpoints` | The points of a trajectory, all in the header's frame | `motion_reference/trajectory`, `actuator_command/trajectory` |
+| `msg/YawMode` | How a behavior handles the yaw | The goals of the motion and path planning behaviors |
+| `msg/PoseWithID` | A pose with a name | The follow path and swarm goals |
+| `msg/PoseStampedWithID` | A stamped pose with a name | The trajectory generation goal |
+| `msg/PoseStampedWithIDArray` | A list of named poses | `motion_reference/modify_waypoint` |
+| `msg/PoseWithIDArray` | A list of named poses | The swarm's `dynamic_swarm_formation` |
+
+```txt title="msg/TrajectoryPoint.msg"
+string id
+geometry_msgs/Vector3 position
+geometry_msgs/Vector3 twist         # A linear velocity, despite its name
+geometry_msgs/Vector3 acceleration
+float32 yaw_angle                   # rad
+```
+
+### YawMode
+
+| Mode | Value | The drone faces |
+| --- | --- | --- |
+| `KEEP_YAW` | `0` | Where it faces now |
+| `PATH_FACING` | `1` | Along the path |
+| `FIXED_YAW` | `2` | The direction in `angle`, in radians |
+| `YAW_FROM_TOPIC` | `3` | The yaw given on a topic |
+| `YAW_FROM_ORIENTATION` | `4` | The orientation of the pose. No behavior supports it yet |
+| `YAW_TO_FRAME` | `5` | The frame the goal is given in |
+| `FACE_REFERENCE` | `6` | The next reference |
+
+Not every behavior takes every mode. The go to behavior takes the first four, for example, and only
+the trajectory generator takes `FACE_REFERENCE`.
+
+## Behaviors
+
+`msg/BehaviorStatus` is the state every behavior publishes on `<behavior>/_behavior/behavior_status`,
+which is `IDLE`, `RUNNING` or `PAUSED`. [Behaviors](/docs/ros2-interfaces/behaviors) lists the rest
+of their interfaces.
+
+### Actions
+
+| Action | Goal | Result | Feedback |
+| --- | --- | --- | --- |
+| `Takeoff` | `takeoff_height` in m, `takeoff_speed` in m/s | `takeoff_success` | `actual_takeoff_height`, `actual_takeoff_speed` |
+| `Land` | `land_speed` in m/s | `land_success` | `actual_land_height`, `actual_land_speed` |
+| `GoToWaypoint` | `target_pose` as a `PointStamped`, `max_speed`, `yaw` | `go_to_success` | `actual_speed`, `actual_distance_to_goal` |
+| `FollowPath` | `header` with the path's frame, `path` as `PoseWithID[]`, `max_speed`, `yaw` | `follow_path_success` | `actual_speed`, `actual_distance_to_next_waypoint`, `remaining_waypoints`, `next_waypoint_id` |
+| `FollowReference` | `target_pose` as a `PointStamped`, `max_speed_x`, `max_speed_y`, `max_speed_z`, `yaw` | `follow_reference_success` | `actual_speed`, `actual_distance_to_goal` |
+| `GeneratePolynomialTrajectory` | `stamp`, `path` as `PoseStampedWithID[]`, `max_speed`, `yaw`, `start_on_paused`, `follow_reference_mode` | `trajectory_generator_success` | `next_waypoint_id`, `remaining_waypoints` |
+| `NavigateToPoint` | `point` as a `PointStamped`, `navigation_speed`, `yaw` | `success` | `current_pose`, `current_speed`, `navigation_time`, `estimated_time_remaining`, `distance_remaining` |
+| `SetArmingState` | `request` | `success` | None |
+| `SetOffboardMode` | `request` | `success` | None |
+| `DetectObjects` | `threshold`, `target_classes` | `perceptions` | `perceptions` |
+| `PointGimbal` | `control` as a `GimbalControl`, `follow_mode`, `mode` | `success` | `gimbal_attitude`, `gimbal_speed` |
+| `GripperHandler` | `request_gripper`, `true` to close | `gripper_success` | `state_gripper` |
+| `MassEstimation` | `request` | `success` | None |
+| `ForceEstimation` | `request` | `success` | None |
+| `SwarmFlocking` | `virtual_centroid`, `swarm_formation` as `PoseWithID[]`, `drones_namespace` | `swarm_success` | `swarm_pose` |
+
+`start_on_paused` generates the trajectory and leaves the behavior paused until it's resumed.
+`follow_reference_mode` takes a single waypoint and keeps tracking it after the trajectory ends.
+
+The point gimbal behavior only takes `GimbalControl` in position mode, without `follow_mode`.
+
+## Perception
+
+| Type | What it carries | Used on |
+| --- | --- | --- |
+| `msg/ObjectPerception` | One detection, with its class, image box, keypoints and an optional 3D pose | Inside `ObjectPerceptionArray` |
+| `msg/ObjectPerceptionArray` | The detections of one image | `detections_data`, and the `DetectObjects` result and feedback |
+| `msg/GimbalControl` | A gimbal command, as angles or rates | `platform/<gimbal>/gimbal_command` |
+| `msg/UInt16MultiArrayStamped` | A list of numbers with a timestamp | The simple EKF's internal debug topics |
+
+In `ObjectPerception`, `pose_valid` says whether the hypothesis carries a 3D pose or only an image
+position.
+
+## Missions
+
+| Type | What it carries | Used on |
+| --- | --- | --- |
+| `msg/MissionUpdate` | A command for the mission executor, with the mission as JSON | `/mission_update` |
+
+[Mission executor](/docs/ros2-interfaces/other-components#mission-executor) lists the commands it
+handles.
+
+## GPS, geozones and TF
+
+| Type | What it does | Used on |
+| --- | --- | --- |
+| `srv/SetOrigin` | Sets the GPS origin | `set_origin` |
+| `srv/GetOrigin` | Returns the GPS origin | `get_origin` |
+| `msg/Geozone` | A geofence or geocage, its height limits and the alert it raises | Inside `SetGeozone` and `GetGeozone` |
+| `srv/SetGeozone` | Adds a geozone | `geozones/set_geozone` |
+| `srv/GetGeozone` | Lists the geozones | `geozones/get_geozone` |
+| `msg/PolygonList` | The geozones as polygons, for RViz | `geozones_rviz` |
+| `srv/AddStaticTransform` | Adds a static transform | `external_object_to_tf/add_static_transform` |
+| `srv/AddStaticTransformGps` | Adds a static transform from a GPS position | `external_object_to_tf/add_static_transform_gps` |
+
+## Not used yet
+
+These types are defined but nothing in Aerostack2 serves or publishes them, so don't build on them.
+
+| Kind | Types |
+| --- | --- |
+| Messages | `FollowTargetInfo`, `MissionEvent`, `NodeStatus`, `Speed`, `TrajGenInfo` |
+| Services | `DynamicFollower`, `DynamicLand`, `GeopathToPath`, `ModifySwarm`, `PackagePickUp`, `PackageUnPick`, `PathToGeopath`, `SetSpeed` |
+| Actions | `DetectArucoMarkers`. The object perception behavior detects ArUco markers through `DetectObjects` |
+
+The GPS behavior tree nodes call a `geopath_to_path` service, but no node serves it, so they wait
+for it forever.

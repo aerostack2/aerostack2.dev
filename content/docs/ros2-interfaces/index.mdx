@@ -1,8 +1,76 @@
 ---
 title: Overview
+description: The topics, services and actions the components of a drone use to talk to each other.
 icon: Compass
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/index.rst`.
+This section lists the ROS 2 interfaces of each component, with their names, types and QoS. It's a
+reference to look things up in. [Communication channels](/docs/concepts/as2-communications) explains
+how the components fit together.
+
+## Names
+
+Every interface is named relative to the drone's namespace. A drone launched as `drone0` publishes
+`platform/info` on `/drone0/platform/info`, and its take-off behavior serves
+`/drone0/TakeoffBehavior`. The pages in this section give the names without the namespace.
+
+The TF topics are the exception. `/tf` and `/tf_static` are shared by every drone, and each drone's
+frames carry its namespace instead, like `drone0/base_link`. [Frames](/docs/concepts/frames) explains
+the tree.
+
+## Using the names in code
+
+The standard names are defined once in `as2_core`, so your code doesn't have to spell them out. In
+C++ they're constants in the `as2_names` namespace, from three headers in `as2_core/names/`:
+
+```cpp
+#include <as2_core/names/topics.hpp>
+#include <as2_core/names/services.hpp>
+#include <as2_core/names/actions.hpp>
+
+auto sub = node->create_subscription<as2_msgs::msg::PlatformInfo>(
+  as2_names::topics::platform::info, as2_names::topics::platform::qos, callback);
+```
+
+The topic header also gives the QoS each group of topics uses. Python has the same names in a module
+built from the headers, without the QoS:
+
+```python
+from as2_core import as2_names
+
+as2_names.topics.platform.info  # 'platform/info'
+as2_names.services.platform.set_arming_state  # 'set_arming_state'
+as2_names.actions.takeoff  # 'TakeoffBehavior'
+```
+
+<Callout title="global is a Python keyword">
+  `as2_names.topics.global.alert_event` is a syntax error in Python. Read it with
+  `getattr(as2_names.topics, "global").alert_event`, or write `"alert_event"` directly.
 </Callout>
+
+The headers only cover the core components and six of the behaviors. The other behaviors and the
+utilities hard-code their names, which the pages in this section list.
+
+## QoS
+
+Aerostack2 uses two QoS profiles for its topics.
+
+| Profile | Settings | Used for |
+| --- | --- | --- |
+| Sensor data | Best effort, depth 5 | Streams where only the latest message matters, like `sensor_measurements/*`, `ground_truth/*`, `motion_reference/*` and `actuator_command/*` |
+| Reliable | Reliable, depth 10 | Status and events, like `platform/info`, `controller/info` and `alert_event` |
+
+A best effort subscriber receives messages from a reliable publisher, but not the other way round.
+To read a sensor data topic, subscribe with sensor data QoS too, or with
+`rclcpp::SensorDataQoS()` in C++ and `qos_profile_sensor_data` in Python.
+
+## Components
+
+<Cards>
+  <Card title="as2_msgs" href="/docs/ros2-interfaces/as2-msgs" description="The messages, services and actions Aerostack2 defines." />
+  <Card title="Aerial platform" href="/docs/ros2-interfaces/aerial-platform" description="Actuator commands, platform services and sensors." />
+  <Card title="Motion controller" href="/docs/ros2-interfaces/motion-controller" description="Motion references in, actuator commands out." />
+  <Card title="State estimator" href="/docs/ros2-interfaces/state-estimator" description="Self localization, TF and the GPS origin." />
+  <Card title="Behaviors" href="/docs/ros2-interfaces/behaviors" description="The actions and services every behavior offers." />
+  <Card title="Other components" href="/docs/ros2-interfaces/other-components" description="Maps, path planning, geozones and other utilities." />
+</Cards>

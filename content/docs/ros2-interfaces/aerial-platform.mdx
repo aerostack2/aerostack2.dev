@@ -1,8 +1,95 @@
 ---
-title: Aerial Platform
+title: Aerial platform
+description: The topics, services and parameters every aerial platform offers.
 icon: PlaneTakeoff
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/aerial_platform/index.rst`.
+Every platform is built on `as2::AerialPlatform`, so they all offer the interfaces on this page. The
+node is called `platform`. [Aerial platform](/docs/concepts/aerial-platform) explains what the
+platform does with them.
+
+## Topics
+
+| Topic | Direction | Type | QoS |
+| --- | --- | --- | --- |
+| `platform/info` | Publishes | `as2_msgs/PlatformInfo` | Reliable |
+| `actuator_command/pose` | Subscribes | `geometry_msgs/PoseStamped` | Sensor data |
+| `actuator_command/twist` | Subscribes | `geometry_msgs/TwistStamped` | Sensor data |
+| `actuator_command/thrust` | Subscribes | `as2_msgs/Thrust` | Sensor data |
+| `actuator_command/trajectory` | Subscribes | `as2_msgs/TrajectorySetpoints` | Sensor data |
+| `alert_event` | Subscribes | `as2_msgs/AlertEvent` | Reliable |
+
+`platform/info` is published at `info_freq`, 10 Hz by default. It says whether the drone is
+connected, armed and in offboard, where the state machine is, and which control mode is active.
+
+The actuator commands come from the motion controller. The platform sends the latest ones to the
+drone at `cmd_freq`, 100 Hz by default, once a control mode is set and the drone is connected, armed
+and in offboard. It reads TF to convert them into the frames the control mode asks for.
+
+`alert_event` acts on two alerts. A kill switch cuts the motors and an emergency hover stops the
+drone, and both put the state machine in its emergency state. Every other alert is ignored.
+
+## Services
+
+| Service | Type | What it does |
+| --- | --- | --- |
+| `set_arming_state` | `std_srvs/SetBool` | Arms with `true` and disarms with `false` |
+| `set_offboard_mode` | `std_srvs/SetBool` | Turns offboard on with `true` and off with `false` |
+| `set_platform_control_mode` | `as2_msgs/SetControlMode` | Switches the control mode. Fails if the platform doesn't support it |
+| `platform_takeoff` | `std_srvs/SetBool` | Takes off natively. The request's value is ignored |
+| `platform_land` | `std_srvs/SetBool` | Lands natively. The request's value is ignored |
+| `platform/list_control_modes` | `as2_msgs/ListControlModes` | Returns the control modes the platform supports |
+| `platform/state_machine_event` | `as2_msgs/SetPlatformStateMachineEvent` | Sends an event to the state machine and returns the new state |
+
+<Callout title="Most services sit at the root of the namespace">
+  The first five services aren't under `platform/`. For `drone0` they're
+  `/drone0/set_arming_state`, `/drone0/platform_takeoff` and so on. Only the last two are under
+  `platform/`.
 </Callout>
+
+`platform_takeoff` and `platform_land` move the state machine on from taking off to flying, and from
+landing to landed. They don't start a take-off or a landing in the state machine, so send the
+`TAKE_OFF` or `LAND` event to `platform/state_machine_event` first. The take-off and land behaviors
+do this for you.
+
+`platform/state_machine_event` is named after the node, unlike the other services. If you launch
+the platform under another node name the service moves with it, and the take-off and land behaviors
+can no longer find it.
+
+## Sensors
+
+Platforms publish their sensors with the helpers in `as2_core/sensor.hpp`, which put each one under
+`sensor_measurements/`. Which sensors there are depends on the drone, so each platform's page lists
+its own. These are the usual ones.
+
+| Topic | Type | QoS |
+| --- | --- | --- |
+| `sensor_measurements/odom` | `nav_msgs/Odometry` | Sensor data |
+| `sensor_measurements/imu` | `sensor_msgs/Imu` | Sensor data |
+| `sensor_measurements/gps` | `sensor_msgs/NavSatFix` | Sensor data |
+| `sensor_measurements/battery` | `sensor_msgs/BatteryState` | Sensor data |
+| `sensor_measurements/<camera>/image` | `sensor_msgs/Image` | Reliable |
+| `sensor_measurements/<camera>/camera_info` | `sensor_msgs/CameraInfo` | Reliable |
+| `ground_truth/pose` | `geometry_msgs/PoseStamped` | Sensor data |
+| `ground_truth/twist` | `geometry_msgs/TwistStamped` | Sensor data |
+
+Cameras go through `image_transport`, so compressed versions such as
+`sensor_measurements/<camera>/image/compressed` appear when their plugins are installed. A camera's
+topics only appear once its first frame arrives. Each camera also publishes a static transform from
+`base_link` to its own frame.
+
+Simulators and motion capture systems publish the ground truth topics, which carry the true pose and
+velocity of the drone.
+
+Gazebo bridges its sensors instead of using the helpers, so their names differ. A camera publishes
+`sensor_measurements/<camera>/image_raw` and a lidar `sensor_measurements/<lidar>/scan`, named after
+the sensor in the drone's model. [Gazebo](/docs/aerial-platforms/gazebo-simulation) has the details.
+
+## Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `control_modes_file` | | The YAML file that lists the control modes the platform supports. Required |
+| `cmd_freq` | `100.0` | How often commands are sent to the drone, in Hz |
+| `info_freq` | `10.0` | How often `platform/info` is published, in Hz |
+| `tf_timeout_threshold` | `0.05` | How long to wait for a transform, in seconds |

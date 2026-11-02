@@ -1,8 +1,135 @@
 ---
 title: Behaviors
+description: The action, services and status topic every behavior offers, and the names of the shipped behaviors.
 icon: Workflow
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/behaviors/index.rst`.
+Every behavior is a node built on `as2_behavior::BehaviorServer`, so they all offer the same set of
+interfaces. A behavior is started through its action, and controlled through a few services while it
+runs. [Behaviors](/docs/concepts/behaviors) explains how they work.
+
+## The common interfaces
+
+For a behavior whose node and action are called `GoToBehavior`, these are the interfaces.
+
+| Name | Kind | Type | What it does |
+| --- | --- | --- | --- |
+| `GoToBehavior` | Action | The behavior's action | Starts the behavior with a goal. Cancelling stops it |
+| `GoToBehavior/_behavior/pause` | Service | `std_srvs/Trigger` | Pauses the behavior. Fails unless it's running |
+| `GoToBehavior/_behavior/resume` | Service | `std_srvs/Trigger` | Resumes the behavior. Fails unless it's paused |
+| `GoToBehavior/_behavior/stop` | Service | `std_srvs/Trigger` | Stops the behavior, the same as cancelling |
+| `GoToBehavior/_behavior/modify` | Service | The action's `_SendGoal` service | Sends the running behavior a new goal |
+| `GoToBehavior/_behavior/behavior_status` | Topic | `as2_msgs/BehaviorStatus` | The behavior's state, published at 10 Hz |
+
+The modify service takes the same request as the action's own goal service, so for the go to
+behavior it's `as2_msgs/action/GoToWaypoint_SendGoal`. Only the `goal` field is read, and `accepted`
+in the response says whether the behavior took it.
+
+`behavior_status` is published all the time, even when nothing runs. It's reliable, with a depth
+of 10.
+
+| Status | Value | Meaning |
+| --- | --- | --- |
+| `IDLE` | `0` | No goal is running |
+| `RUNNING` | `1` | A goal is running |
+| `PAUSED` | `2` | A goal is paused, and resume picks it up again |
+
+While a goal runs, the behavior works on it at `run_frequency`, 10 Hz by default, and sends feedback
+on every cycle. A paused behavior doesn't run at all.
+
+<Callout type="warn" title="The services follow the node name">
+  The action takes its name from the behavior's code, but the services and the status topic are
+  under the node's name. The two are the same unless you launch the behavior with another node name.
+  Then the action keeps its name while the services move, and the Python API can no longer pause,
+  stop or modify it.
 </Callout>
+
+## Shipped behaviors
+
+| Behavior | Package | Action | Type |
+| --- | --- | --- | --- |
+| Take off | `as2_behaviors_motion` | `TakeoffBehavior` | `as2_msgs/Takeoff` |
+| Land | `as2_behaviors_motion` | `LandBehavior` | `as2_msgs/Land` |
+| Go to | `as2_behaviors_motion` | `GoToBehavior` | `as2_msgs/GoToWaypoint` |
+| Follow path | `as2_behaviors_motion` | `FollowPathBehavior` | `as2_msgs/FollowPath` |
+| Follow reference | `as2_behaviors_motion` | `FollowReferenceBehavior` | `as2_msgs/FollowReference` |
+| Trajectory generation | `as2_behaviors_trajectory_generation` | `TrajectoryGeneratorBehavior` | `as2_msgs/GeneratePolynomialTrajectory` |
+| Arm | `as2_behaviors_platform` | `set_arming_state` | `as2_msgs/SetArmingState` |
+| Offboard | `as2_behaviors_platform` | `set_offboard_mode` | `as2_msgs/SetOffboardMode` |
+| Path planning | `as2_behaviors_path_planning` | `path_planner` | `as2_msgs/NavigateToPoint` |
+| Object perception | `as2_behaviors_object_perception` | `ObjectPerceptionBehavior` | `as2_msgs/DetectObjects` |
+| Point gimbal | `as2_behaviors_payload` | `PointGimbalBehavior` | `as2_msgs/PointGimbal` |
+| Gripper | `as2_behaviors_payload` | `GripperHandlerBehavior` | `as2_msgs/GripperHandler` |
+| Mass estimation | `as2_behaviors_param_estimation` | `MassEstimationBehavior` | `as2_msgs/MassEstimation` |
+| Force estimation | `as2_behaviors_param_estimation` | `ForceEstimationBehavior` | `as2_msgs/ForceEstimation` |
+| Swarm flocking | `as2_behaviors_swarm_flocking` | `SwarmFlockingBehavior` | `as2_msgs/SwarmFlocking` |
+
+All the action types are in `as2_msgs/action`, and [as2_msgs](/docs/ros2-interfaces/as2-msgs#actions)
+lists their goals, results and feedback. Only the first six names are in `as2_core/names/actions.hpp`.
+
+The arm and offboard behaviors wrap the platform services of the same name, so you can run them like
+any other behavior. They can't be paused, modified, stopped or cancelled.
+
+The swarm flocking behavior isn't tied to one drone. Its launch file puts it in the `Swarm`
+namespace, so its action is `/Swarm/SwarmFlockingBehavior`.
+
+## What else each behavior uses
+
+### Motion behaviors
+
+The five motion behaviors and the trajectory generator send their references through the motion
+reference handlers. Those publish on `motion_reference/*` and call `controller/set_control_mode`
+when the control mode changes, as described in [Motion controller](/docs/ros2-interfaces/motion-controller).
+They read the drone's state from `self_localization/twist` and TF.
+
+| Behavior | Also uses |
+| --- | --- |
+| Take off | The `platform/state_machine_event` service, to send `TAKE_OFF` and then `TOOK_OFF`. The platform plugin calls `platform_takeoff` |
+| Land | The `platform/state_machine_event` service, to send `LAND` and then `LANDED`, and `set_arming_state` to disarm once landed. The platform plugin calls `platform_land` |
+| Go to, follow path, follow reference | `platform/info`, to reject goals while the drone isn't flying |
+| Trajectory generation | `motion_reference/modify_waypoint` (`as2_msgs/PoseStampedWithIDArray`), to move waypoints of the running trajectory |
+
+The motion behaviors' trajectory plugins don't send references themselves. They run the trajectory
+generation behavior through its action, so it has to be running too. The follow reference trajectory
+plugin moves its target by publishing on `motion_reference/modify_waypoint`.
+
+The trajectory generator can also publish what it generated, under
+`debug/behaviors/trajectory_generation/`. Each of its `debug.*` parameters sets one topic, and an
+empty value turns it off.
+
+### Path planning
+
+| Name | Kind | Type |
+| --- | --- | --- |
+| `map` or `map_filtered` | Subscribes | `nav_msgs/OccupancyGrid` |
+| `self_localization/pose` | Subscribes | `geometry_msgs/PoseStamped` |
+| `FollowPathBehavior` | Action client | `as2_msgs/FollowPath` |
+| `FollowPathBehavior/_behavior/pause`, `resume` | Service clients | `std_srvs/Trigger` |
+| `plugin_viz/*` | Publishes | The planned path and the planner's grids, for RViz |
+
+The A* plugin plans on `map` and the Voronoi plugin on `map_filtered`, both from the
+[map server](/docs/ros2-interfaces/other-components#map-server). The planned path is flown with the
+follow path behavior, so that one has to run too.
+
+### Object perception
+
+The behavior runs a pipeline of detection stages on camera images.
+
+| Name | Kind | Type | Parameter |
+| --- | --- | --- | --- |
+| `sensor_measurements/camera/image_raw` | Subscribes | `sensor_msgs/Image`, or `CompressedImage` for a name ending in `/compressed` | `camera_image_topic` |
+| `sensor_measurements/camera/camera_info` | Subscribes | `sensor_msgs/CameraInfo` | `camera_info_topic` |
+| `detections_data` | Publishes | `as2_msgs/ObjectPerceptionArray` | `pipeline.<stage>.output_topic` |
+| `debug/detection_poses` | Publishes | `geometry_msgs/PoseArray` | `pipeline.<stage>.debug_poses_topic` |
+
+All of them use sensor data QoS. The default image topic fits a Gazebo camera called `camera`.
+Platforms built on the sensor helpers publish `sensor_measurements/<camera>/image` instead, so set
+`camera_image_topic` for those.
+
+### Payload and estimation
+
+| Behavior | Uses |
+| --- | --- |
+| Point gimbal | Publishes `platform/<gimbal_name>/gimbal_command` (`as2_msgs/GimbalControl`). `gimbal_name` defaults to `gimbal` |
+| Gripper | Publishes the gripper commands, which depend on the plugin |
+| Mass and force estimation | Subscribe to `actuator_command/thrust` and `sensor_measurements/imu`. With `controller_node` set, they write the estimate into the controller's parameters through its `get_parameters` and `set_parameters` services |

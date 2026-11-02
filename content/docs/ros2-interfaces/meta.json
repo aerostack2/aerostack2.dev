@@ -7,6 +7,7 @@
     "aerial-platform",
     "motion-controller",
     "state-estimator",
-    "behaviors"
+    "behaviors",
+    "other-components"
   ]
 }

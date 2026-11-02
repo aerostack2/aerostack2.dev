@@ -1,8 +1,108 @@
 ---
-title: State Estimator
+title: State estimator
+description: What the state estimator publishes, and what each plugin subscribes to.
 icon: LocateFixed
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/state_estimator/index.rst`.
-</Callout>
+The state estimator runs as one node per drone, called `state_estimator`. The node publishes the
+same outputs whatever plugin it loads, and the plugin decides what it subscribes to.
+[State estimator](/docs/concepts/state-estimator) explains the plugins and the TF tree.
+
+The node creates its topics and loads its plugin about a second after it starts, so they don't show
+up straight away.
+
+## Outputs
+
+| Topic | Type | Frame | QoS |
+| --- | --- | --- | --- |
+| `self_localization/pose` | `geometry_msgs/PoseStamped` | `earth` | Reliable |
+| `self_localization/twist` | `geometry_msgs/TwistStamped` | `base_link` | Reliable |
+| `/tf` | `tf2_msgs/TFMessage` | `map → odom → base_link` | TF defaults |
+| `/tf_static` | `tf2_msgs/TFMessage` | `earth → map` | TF defaults |
+
+Every plugin publishes `earth → map` as a static transform. The EKF moves it to `/tf` when
+`simple_ekf.earth_map_transform.static_tf` is `false`.
+
+The pose and twist are published on every update unless `publish_hz` sets a rate. They use reliable
+QoS with a depth of 10, even though the names header gives sensor data QoS for `self_localization/*`.
+A sensor data subscriber still receives them.
+
+The names header also defines `self_localization/odom`, but nothing publishes it.
+
+## Debug topics
+
+Every plugin also gets a copy of its own estimate, which helps to compare plugins or check one
+before you trust it.
+
+| Topic | Type |
+| --- | --- |
+| `state_estimation/<plugin>/pose` | `geometry_msgs/PoseStamped` |
+| `state_estimation/<plugin>/twist` | `geometry_msgs/TwistStamped` |
+
+They're on by default and published on every update. `<plugin>.debug_publish_hz` sets a rate, and
+`0` turns them off.
+
+## Plugin inputs
+
+### Ground truth
+
+| Topic | Type | Parameter |
+| --- | --- | --- |
+| `ground_truth/pose` | `geometry_msgs/PoseStamped` | `ground_truth.pose_sub_topic` |
+| None by default | `geometry_msgs/TwistStamped` | `ground_truth.twist_sub_topic` |
+| None by default | `mocap4r2_msgs/RigidBodies` | `ground_truth.mocap_sub_topic` |
+
+The pose has to be in the `earth` frame. With no twist topic, the twist is differentiated from the
+pose. With a motion capture topic, the pose comes from the rigid body named in
+`ground_truth.rigid_body_name` instead.
+
+### Raw odometry
+
+| Topic | Type | Parameter |
+| --- | --- | --- |
+| `sensor_measurements/odom` | `nav_msgs/Odometry` | `raw_odometry.odom_sub_topic` |
+| `sensor_measurements/gps` | `sensor_msgs/NavSatFix` | Only with `raw_odometry.use_gps` |
+
+With `use_gps` on, the plugin also serves the GPS origin. These are the only origin services in
+Aerostack2, so anything that flies to GPS coordinates needs this plugin.
+
+| Service | Type | What it does |
+| --- | --- | --- |
+| `set_origin` | `as2_msgs/SetOrigin` | Sets the origin. Refused once one is set, whether by a call, the parameters or the first fix |
+| `get_origin` | `as2_msgs/GetOrigin` | Returns the origin, if it's set |
+
+Both sit at the root of the namespace, so for `drone0` they're `/drone0/set_origin` and
+`/drone0/get_origin`.
+
+### Simple EKF
+
+| Topic | Type | Parameter |
+| --- | --- | --- |
+| `sensor_measurements/imu` | `sensor_msgs/Imu` | `simple_ekf.predict_topic` |
+| `platform/info` | `as2_msgs/PlatformInfo` | `simple_ekf.platform_topic` |
+| `ground_truth/pose` | Set per source | `simple_ekf.<source>.topic` |
+| None by default | `geometry_msgs/TwistStamped` | `simple_ekf.imu_model_fallback.body_rates_topic` |
+| None by default | `as2_msgs/Thrust` | `simple_ekf.imu_model_fallback.thrust_topic` |
+
+Each source in `update_topics` sets its own topic and type. The type is one of
+`geometry_msgs/PoseStamped`, `geometry_msgs/PoseWithCovarianceStamped`, `nav_msgs/Odometry` and
+`mocap4r2_msgs/RigidBodies`. The default configuration has a single source on `ground_truth/pose`.
+
+`platform/info` tells the filter when the drone first goes offboard, which ends the correction it
+applies on the ground. The two fallback topics stand in for the IMU when it stops arriving.
+
+Setting `simple_ekf.internal_ekf_debug_topics` to a base name also publishes the filter's raw state
+under it, before smoothing. The plugin's
+[README](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/simple_ekf)
+lists those topics.
+
+## Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `plugin_name` | | The plugin to load. Required |
+| `publish_hz` | `0.0` | How often the pose and twist are published, in Hz. `0` publishes on every update |
+| `<plugin>.debug_publish_hz` | `-1.0` | How often the debug topics are published. `-1` publishes on every update and `0` turns them off |
+
+All the estimator's timers run on wall time, so `publish_hz` and `debug_publish_hz` ignore
+`use_sim_time`.

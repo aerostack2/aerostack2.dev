@@ -1,0 +1,110 @@
+---
+title: Other components
+description: The interfaces of the map server, geozones, the external object to TF tool, the mission executor and the alerts.
+icon: Boxes
+---
+
+These components are optional. Each one runs as its own node under the drone's namespace, unless
+this page says otherwise.
+
+## Map server
+
+The map server builds an occupancy grid from a laser scan, for the path planning behavior. The node
+is called `as2_map_server`, and `plugin_name` picks the plugin, `scan2occ_grid` by default.
+
+| Topic | Direction | Type | QoS |
+| --- | --- | --- | --- |
+| `sensor_measurements/lidar/scan` | Subscribes | `sensor_msgs/LaserScan` | Sensor data |
+| `map` | Publishes | `nav_msgs/OccupancyGrid` | Reliable |
+| `map_filtered` | Publishes | `nav_msgs/OccupancyGrid` | Reliable |
+
+The scan topic is fixed in the code. Gazebo publishes it for a lidar named `lidar`, and any other
+source has to be remapped to it. The grid is in the `earth` frame, centred on its origin.
+
+The `depth2occ_grid` and `point_cloud2occ_grid` launch files build the map from a depth camera or a
+point cloud. They turn it into a laser scan on `sensor_measurements/lidar/scan` first, and then run
+the same plugin.
+
+The path planning behavior's A* plugin reads `map`, and its Voronoi plugin reads `map_filtered`.
+
+## Geozones
+
+Geozones are areas the drone must stay in or out of. The node is called `geozones`. It loads its
+zones from `config_file` and checks the drone's position against them.
+
+| Name | Kind | Type | What it does |
+| --- | --- | --- | --- |
+| `self_localization/pose` | Subscribes | `geometry_msgs/PoseStamped` | The position to check |
+| `alert_event` | Publishes | `as2_msgs/AlertEvent` | The zone's alert, while the drone breaks it |
+| `geozones/set_geozone` | Service | `as2_msgs/SetGeozone` | Adds a zone |
+| `geozones/get_geozone` | Service | `as2_msgs/GetGeozone` | Lists the zones |
+| `geozones_rviz` | Publishes | `as2_msgs/PolygonList` | The zones as polygons, with `debug_rviz` on |
+| `get_origin` | Client | `as2_msgs/GetOrigin` | Reads the GPS origin, for zones given in GPS coordinates |
+
+A geocage raises its alert while the drone is outside it, and a geofence while the drone is inside
+it. The alert is published again on every check for as long as that lasts.
+
+<Callout type="warn" title="Pick an alert the platform acts on">
+  Each zone sets its own `alert` value, and the example configuration uses `1`, a force hover.
+  Nothing in Aerostack2 acts on that yet. Use `-2` for an emergency hover or `-1` for a kill switch,
+  or react to the alert in a behavior tree.
+</Callout>
+
+Zones in GPS coordinates need the GPS origin, which only the
+[raw odometry estimator](/docs/ros2-interfaces/state-estimator#raw-odometry) serves.
+
+## External object to TF
+
+This tool adds objects outside the drone to the TF tree, like a landing pad, a gate or another
+robot. The node is called `external_object_to_tf`. Its launch file runs it at the root namespace by
+default, so its services are under `/external_object_to_tf/`.
+
+| Name | Kind | Type | What it does |
+| --- | --- | --- | --- |
+| `external_object_to_tf/add_static_transform` | Service | `as2_msgs/AddStaticTransform` | Adds a static transform |
+| `external_object_to_tf/add_static_transform_gps` | Service | `as2_msgs/AddStaticTransformGps` | Adds a static transform from a GPS position and an azimuth |
+| `/mocap/rigid_bodies` | Subscribes | `mocap4r2_msgs/RigidBodies` | Rigid bodies from motion capture, set with `mocap_topic` |
+| Set per object | Subscribes | `geometry_msgs/PoseStamped`, `sensor_msgs/NavSatFix`, `std_msgs/Float32` | Each object's pose, or its GPS position and azimuth |
+| `get_origin` | Client | `as2_msgs/GetOrigin` | Reads the GPS origin, for objects given in GPS coordinates |
+| `/tf`, `/tf_static` | Publishes | `tf2_msgs/TFMessage` | The objects' transforms |
+
+The objects and their topics come from the file in `config_file`. All the subscriptions use sensor
+data QoS.
+
+At the root namespace, `get_origin` resolves to `/get_origin` rather than a drone's
+`/drone0/get_origin`. Launch the tool in the drone's namespace when it needs the origin.
+
+## Mission executor
+
+`ros2 run as2_python_api mission_executor` runs the [mission interpreter](/docs/concepts/missions#mission-interpreter)
+as a node, so a ground station can send it missions while the drone flies.
+
+| Topic | Direction | Type | What it carries |
+| --- | --- | --- | --- |
+| `/mission_update` | Subscribes | `as2_msgs/MissionUpdate` | A command, with the mission as JSON |
+| `/mission_status` | Publishes | `std_msgs/String` | The interpreter's status as JSON, every two seconds |
+
+Both topics are shared by every drone by default, and each executor ignores updates whose `drone_id`
+isn't its own. With `--add_namespace` they move under the drone's namespace. `--n` sets the drone,
+`drone0` by default, and `--timer_freq` sets how often the status is published.
+
+The executor handles the `EXECUTE`, `LOAD`, `START`, `PAUSE`, `RESUME`, `STOP` and `NEXT_ITEM`
+commands. The others in the message aren't implemented yet and are logged and ignored.
+
+## Alerts
+
+`alert_event` sits under the drone's namespace like any other topic. It's reliable, with a depth of
+10.
+
+| Alert | Value | Acted on by |
+| --- | --- | --- |
+| `KILL_SWITCH` | `-1` | The platform, which cuts the motors |
+| `EMERGENCY_HOVER` | `-2` | The platform, which stops the drone |
+| `EMERGENCY_LAND` | `-3` | Nothing yet |
+| `INFO_ALERT` | `0` | Nothing |
+| `FORCE_HOVER` | `1` | Nothing yet |
+| `FORCE_LAND` | `2` | Nothing yet |
+
+The Python API, the RViz teleoperation panel and geozones publish alerts. A behavior tree can wait
+for any of them with the `WaitForAlert` decorator. [Alerts](/docs/concepts/as2-communications#alerts)
+has more on what each one means.

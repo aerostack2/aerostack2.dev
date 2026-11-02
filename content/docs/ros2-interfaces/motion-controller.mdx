@@ -1,8 +1,91 @@
 ---
-title: Motion Controller
+title: Motion controller
+description: The topics, services and parameters of the motion controller.
 icon: Gauge
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_08_ros2_common_interfaces/motion_controller/index.rst`.
-</Callout>
+The motion controller runs as one node per drone, called `controller_manager`. Its interfaces are
+the same whatever plugin it loads. [Motion controller](/docs/concepts/motion-controller) explains
+how it picks control modes and what the plugins do.
+
+## Topics
+
+| Topic | Direction | Type | QoS |
+| --- | --- | --- | --- |
+| `motion_reference/pose` | Subscribes | `geometry_msgs/PoseStamped` | Sensor data |
+| `motion_reference/twist` | Subscribes | `geometry_msgs/TwistStamped` | Sensor data |
+| `motion_reference/trajectory` | Subscribes | `as2_msgs/TrajectorySetpoints` | Sensor data |
+| `motion_reference/thrust` | Subscribes | `as2_msgs/Thrust` | Sensor data |
+| `self_localization/twist` | Subscribes | `geometry_msgs/TwistStamped` | Sensor data |
+| `platform/info` | Subscribes | `as2_msgs/PlatformInfo` | Reliable |
+| `actuator_command/pose` | Publishes | `geometry_msgs/PoseStamped` | Sensor data |
+| `actuator_command/twist` | Publishes | `geometry_msgs/TwistStamped` | Sensor data |
+| `actuator_command/thrust` | Publishes | `as2_msgs/Thrust` | Sensor data |
+| `actuator_command/trajectory` | Publishes | `as2_msgs/TrajectorySetpoints` | Sensor data |
+| `controller/info` | Publishes | `as2_msgs/ControllerInfo` | Reliable |
+
+The controller doesn't subscribe to `self_localization/pose`. Every time a twist arrives, it looks up
+the pose of `base_link` in `odom` from TF at the twist's timestamp.
+
+It only computes commands while `platform/info` says the drone is armed and in offboard. It then
+publishes them at `cmd_freq`, and `controller/info` at `info_freq`.
+
+## Commands for each output mode
+
+The output mode decides which `actuator_command/*` topics the controller publishes on every cycle.
+
+| Output mode | Topics |
+| --- | --- |
+| Trajectory | `trajectory` |
+| Position | `pose` and `twist` |
+| Speed | `twist`, plus `pose` when the yaw is an angle |
+| Speed in a plane | `pose` and `twist` |
+| Attitude | `pose` and `thrust`, plus `twist` when the yaw is a speed |
+| Body rates | `twist` and `thrust` |
+| Hover | None |
+
+## Services
+
+| Service | Role | Type | What it does |
+| --- | --- | --- | --- |
+| `controller/set_control_mode` | Server | `as2_msgs/SetControlMode` | Asks for an input mode. The controller picks an output mode the platform accepts |
+| `platform/list_control_modes` | Client | `as2_msgs/ListControlModes` | Reads the platform's modes. Called once, and the answer is kept |
+| `set_platform_control_mode` | Client | `as2_msgs/SetControlMode` | Sets the chosen output mode on the platform |
+
+When the controller needs a platform service, it waits for it and tries again every second until it
+appears. A controller started without a platform blocks its first mode change.
+
+## Debug topics
+
+The controller can publish what its plugin sees on every cycle. Each topic has a parameter under
+`debug.`, and an empty value turns it off. They're all off unless the configuration file sets them,
+and the default file sets them all. A relative name goes under `debug/controller/`, and a name that
+starts with `/` is used as it is.
+
+| Parameter | Topic in the default file | Type |
+| --- | --- | --- |
+| `debug.state_pose_topic` | `debug/controller/state/pose` | `geometry_msgs/PoseStamped` |
+| `debug.state_twist_topic` | `debug/controller/state/twist` | `geometry_msgs/TwistStamped` |
+| `debug.reference_pose_topic` | `debug/controller/reference/pose` | `geometry_msgs/PoseStamped` |
+| `debug.reference_twist_topic` | `debug/controller/reference/twist` | `geometry_msgs/TwistStamped` |
+| `debug.reference_trajectory_topic` | `debug/controller/reference/trajectory` | `as2_msgs/TrajectorySetpoints` |
+| `debug.compute_output_time_topic` | `debug/controller/compute_output_time` | `std_msgs/Float64` |
+
+The state and references are given in the frames the plugin works in, after the controller converts
+them. The plugin's output is already on `actuator_command/*`. Plugins can add their own debug topics,
+set under `<plugin_name>.debug` in their configuration file.
+
+## Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `plugin_name` | | The controller plugin to load. Required |
+| `cmd_freq` | `100.0` | How often commands are computed and sent, in Hz |
+| `info_freq` | `10.0` | How often `controller/info` is published, in Hz |
+| `use_bypass` | `true` | Passes references straight to the platform when it accepts them |
+| `tf_timeout_threshold` | `0.05` | How long to wait for a transform, in seconds |
+| `desired_pose_frame` | `""` | The frame the plugin gets poses in. Empty means `odom` |
+| `desired_twist_frame` | `""` | The frame the plugin gets twists in. Empty means `base_link` |
+
+The defaults come from the configuration file that ships with the controller, which the launch file
+loads. A configuration file of your own that leaves out `use_bypass` turns bypass off.
