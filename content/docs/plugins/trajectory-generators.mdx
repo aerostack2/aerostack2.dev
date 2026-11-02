@@ -1,0 +1,163 @@
+---
+title: Trajectory generators
+description: The four planners that turn waypoints into smooth trajectories, and how to tune each one.
+icon: Spline
+---
+
+The trajectory generator behavior turns a list of waypoints into a smooth trajectory and streams it
+to the motion controller as trajectory references. The trajectory plugins of the
+[motion behaviors](/docs/plugins/motion-behaviors) use it, so take off, go to and the rest can fly
+smooth paths. Its plugin decides how the trajectory is computed.
+
+| Plugin | Computes | When the goal changes |
+| --- | --- | --- |
+| `dynamic_mav_trajectory_generator` | Polynomials through the waypoints, optimized for low acceleration | Stitches the change into the running trajectory |
+| `mav_trajectory_generator` | Polynomials that minimize a chosen derivative, acceleration by default, with a linear or nonlinear solver | Starts a new trajectory from the current state |
+| `gcopter_trajectory_generator` | Trajectories that respect the drone's tilt, body rate and thrust limits | Starts a new trajectory from the current state |
+| `jerk_limited_trajectory_generator` | S-curves with hard speed, acceleration and jerk limits, like PX4's | Starts a new trajectory from the current state |
+
+Every plugin plans with the goal's speed. Yaw is handled by the behavior, not the plugin, so every
+yaw mode works the same with all four. The trajectory goes to the motion controller as trajectory
+references, which every built-in controller accepts.
+
+## Choosing a plugin
+
+- **dynamic_mav** is the one to use when the waypoints move while flying, as with follow reference.
+  It's the only plugin that changes a trajectory without starting over, and the one the example
+  projects configure. A change can move or add waypoints, but keeps the original speed.
+- **mav** fits paths known in advance. Use its nonlinear solver if the speed and acceleration
+  limits must hold.
+- **gcopter** fits when the drone's own limits matter, such as how far it can tilt. It has the most
+  settings to tune. It doesn't avoid obstacles.
+- **jerk_limited** gives predictable, gentle motion with strict limits, and is cheap to compute.
+
+## Running it
+
+```bash
+ros2 launch as2_behaviors_trajectory_generation generate_polynomial_trajectory_behavior_launch.py \
+  namespace:=drone0 \
+  plugin_name:=dynamic_mav_trajectory_generator
+```
+
+There's no default plugin. Pass `plugin_name` at launch, or set it in the file given as
+`config_file`, along with the behavior parameters below. Put them under the node's name,
+`TrajectoryGeneratorBehavior`, so a configuration file shared with other nodes doesn't give them
+the same plugin name:
+
+```yaml title="config/config.yaml"
+/**:
+  TrajectoryGeneratorBehavior:
+    ros__parameters:
+      plugin_name: "dynamic_mav_trajectory_generator"
+      path_length: 0
+```
+
+<Callout type="warn" title="Plugin settings come from the package">
+  The launch file always loads the plugin's own settings file last, so plugin settings placed in
+  `config_file` are replaced by their defaults. The settings listed for each plugin below are those
+  defaults.
+</Callout>
+
+The first build downloads each plugin's library unless it's already installed, so it needs internet
+access.
+
+## Behavior parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `desired_frame_id` | empty | The frame the trajectory is planned in. Empty means the drone's `odom` |
+| `sampling_n` | 1 | How many future points each reference message carries |
+| `sampling_dt` | 0.01 | The time between those points, in seconds |
+| `path_length` | 0 | How many waypoints to plan at once. 0 plans the whole path |
+| `yaw_threshold` | 0.1 | With path facing, the yaw holds while the horizontal speed is below this, in m/s. With face reference, it holds while the next waypoint is closer than this, in meters |
+| `yaw_speed_threshold` | 0.0 | The fastest the yaw may turn in face reference mode, in rad/s. 0 means no limit |
+| `frequency_update_frame` | 0.0 | How often to check whether `map` moved against the planning frame, in Hz. 0 turns it off |
+| `transform_threshold` | 1.0 | How far `map` must move before the trajectory is replanned, in meters. 0 turns the check off |
+
+The generated path is published on `debug/behaviors/trajectory_generation/trajectory/generated` for
+RViz, next to markers for the waypoints and the current reference.
+
+## Dynamic MAV
+
+Built on [dynamic_trajectory_generator](https://github.com/cvar-upm/dynamic_trajectory_generator),
+which wraps ETH Zurich's mav_trajectory_generation. It keeps the speed under the goal's speed and
+the acceleration under 9.81 m/s². A new trajectory always starts from rest. Face reference yaw skips
+waypoints whose id contains `ny`.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `ls_velocity_factor` | 1.0 | Scales the speed used to time segments that end at a waypoint whose id contains `ls`. Below 1 slows the drone there |
+| `ls_acceleration_factor` | 1.0 | Scales the acceleration used to time those segments |
+
+## MAV
+
+Built on ETH Zurich's [mav_trajectory_generation](https://github.com/ethz-asl/mav_trajectory_generation),
+through the [mav_trajectory_generation_lib](https://github.com/aerostack2/mav_trajectory_generation_lib)
+wrapper. Its parameters sit under `optimization`, such as
+`mav_trajectory_generator.optimization.solver`. With the defaults it plans the same trajectories as
+dynamic_mav.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `derivative_to_optimize` | 2 | The derivative to minimize. 0 position, 1 velocity, 2 acceleration, 3 jerk, 4 snap |
+| `solver` | `nonlinear` | `linear` solves fast and ignores the limits. `nonlinear` enforces the speed and acceleration limits |
+| `a_max` | 9.81 | The acceleration limit, in m/s² |
+| `nl_max_iterations` | 2000 | The most iterations of the nonlinear solver |
+| `nl_f_rel` | 0.05 | The solver's relative tolerance on the cost |
+| `nl_x_rel` | 0.1 | The solver's relative tolerance on the parameters |
+| `nl_time_penalty` | 1000.0 | How much the solver penalizes a longer trajectory |
+| `nl_initial_stepsize_rel` | 0.1 | The solver's initial step size |
+| `nl_inequality_constraint_tolerance` | 0.2 | How far the solver may break a limit |
+
+## GCOPTER
+
+Built on [GCOPTER](https://github.com/ZJU-FAST-Lab/GCOPTER), through the
+[gcopter_trajectory_generator_lib](https://github.com/aerostack2/gcopter_trajectory_generator_lib)
+wrapper. It models the drone's mass and drag, and
+keeps the trajectory inside boxes around the path between the waypoints. Its parameters are grouped
+under `drone`, `limits`, `optimization` and `waypoints`, such as
+`gcopter_trajectory_generator.drone.mass`.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `drone.mass` | 1.0 | The drone's mass, in kg |
+| `drone.gravity` | 9.81 | Gravity, in m/s² |
+| `drone.horizontal_drag`, `drone.vertical_drag`, `drone.parasitic_drag` | 0.1, 0.1, 0.01 | The drag coefficients |
+| `drone.speed_smooth_factor` | 0.01 | Smooths the speed term of the drag model |
+| `limits.max_body_rate` | 6.0 | The highest body rate, in rad/s |
+| `limits.max_tilt_angle` | 0.785 | The highest tilt, in radians |
+| `limits.min_thrust`, `limits.max_thrust` | 0.1, 30.0 | The thrust range, in newtons |
+| `optimization.time_weight` | 512.0 | How much a longer trajectory costs |
+| `optimization.position_weight`, `optimization.velocity_weight`, `optimization.body_rate_weight`, `optimization.tilt_weight`, `optimization.thrust_weight` | 10000.0 | How much breaking each limit costs |
+| `optimization.smoothing_eps` | 0.01 | Smooths the limit penalties |
+| `optimization.integral_resolution` | 16 | The samples per segment used to check the limits |
+| `optimization.rel_cost_tol` | 0.001 | The solver's relative tolerance on the cost |
+| `optimization.corridor_margin` | 0.1 | The margin of the boxes around the path, in meters |
+| `optimization.vertical_perturbation` | 0.05 | A small sideways shift for straight-up segments, which the solver can't plan otherwise, in meters. 0 turns it off |
+| `optimization.vertical_alignment_threshold` | 0.10 | The shift applies when every waypoint is within this horizontal distance of the drone, in meters |
+| `waypoints.waypoint_margin` | 0.1 | A tighter box margin next to each waypoint, so the path passes close to it, in meters |
+| `waypoints.waypoint_anchor_radius` | 0.5 | How far before and after each waypoint the path is anchored, in meters. 0 turns anchoring off |
+
+`limits.max_velocity` is in the file too, but the goal's speed always replaces it.
+
+## Jerk limited
+
+An S-curve generator in the style of PX4's, built on
+[jerk_limited_trajectory_generator_lib](https://github.com/aerostack2/jerk_limited_trajectory_generator_lib).
+Its parameters are grouped under `limits` and `simulator`, such
+as `jerk_limited_trajectory_generator.limits.max_jerk`.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `limits.max_acceleration` | 10.0 | The acceleration limit, in m/s² |
+| `limits.max_jerk` | 20.0 | The jerk limit on each axis, in m/s³ |
+| `limits.acceptance_radius` | 0.01 | How far from a waypoint the drone may cut the corner, in meters. 0 stops at every waypoint |
+| `limits.final_acceptance_radius` | 0.01 | How close to the last waypoint counts as arrived, in meters. 0 uses `acceptance_radius` |
+| `limits.trajectory_gain` | 0.1 | Scales the acceleration used to cap the speed through corners. Higher takes corners faster, and the default slows the drone well down at corners |
+| `simulator.step_dt` | 0.01 | The time step used to build the trajectory, in seconds |
+| `simulator.max_simulation_time` | 600.0 | The longest trajectory it can build, in seconds |
+| `simulator.settle_velocity` | 0.05 | The speed below which the drone counts as stopped, in m/s |
+| `simulator.advance_radius_min` | 0.1 | The smallest distance at which it moves on to the next waypoint, in meters |
+| `simulator.polynomial_order` | 16 | The number of polynomial coefficients per axis and segment |
+
+`limits.max_speed` is in the file too, but the goal's speed always replaces it.

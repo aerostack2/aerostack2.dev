@@ -1,0 +1,102 @@
+---
+title: Ryze Tello
+description: Fly the Ryze Tello over Wi-Fi with the Tello SDK, with native take-off and landing.
+icon: Wind
+---
+
+The Tello platform flies the [Ryze Tello](https://www.ryzerobotics.com/tello), a small indoor drone
+made with DJI. The computer joins the Tello's Wi-Fi network and sends it Tello SDK commands over UDP.
+The Tello flies itself, takes off and lands on command, and Aerostack2 sends it velocities. It
+builds on ROS 2 Humble and Jazzy.
+
+The Tello measures its height, attitude and velocity, but not its position. To fly missions that go
+somewhere, pair it with motion capture.
+
+## Install
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_tello.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install --packages-up-to as2_platform_tello
+```
+
+## Launch
+
+Turn on the Tello, join its Wi-Fi network and launch the platform:
+
+```bash
+ros2 launch as2_platform_tello tello_platform.launch.py namespace:=drone0
+```
+
+The platform puts the Tello in SDK mode when it starts, and stops if the Tello doesn't answer. It
+also pings the Tello every two seconds, so the Tello doesn't land when commands pause.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 10.0 | How often commands are sent, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `tello_ip` | `192.168.10.1` | The Tello's address |
+| `port_command` | 8889 | The Tello's command port |
+| `port_state` | 8890 | The local port the Tello sends its state to |
+| `camera.enable` | true | Stream the Tello's camera |
+| `camera.freq` | 30.0 | How often camera images are published, in Hz |
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Hover | |
+| Speed | Rate |
+
+That fits the PID speed controller. The Tello takes velocities in its own body frame, and Aerostack2
+converts them before sending. Speeds are limited to 1 m/s.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | The height, attitude and velocity, with no horizontal position |
+| `sensor_measurements/imu` | The IMU |
+| `sensor_measurements/barometer` | The barometer |
+| `sensor_measurements/battery` | The battery state |
+| `sensor_measurements/camera/image` | The camera, with `camera.enable` on |
+| `platform/info` | The platform status |
+
+## With the rest of the stack
+
+Since the Tello has no horizontal position, use the `ground_truth` estimator on a motion capture
+rigid body. Use the platform's own take-off and landing too:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "ground_truth"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_platform"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_platform"
+```
+
+The [state estimator](/docs/concepts/state-estimator#ground-truth) page explains how to point the
+ground truth plugin at a motion capture system.
+
+## Several Tellos
+
+Out of the box a Tello is its own Wi-Fi access point, so one computer can fly one Tello. To fly
+several, put Tello EDUs in station mode on a shared network, then launch one platform per drone with
+its own namespace, `tello_ip`, `port_command_client`, `port_state` and
+`camera.stream_port`.
+
+## Things to know
+
+- Arming only puts the Tello in SDK mode. The motors start when it takes off.
+- Stopping the platform makes the Tello hover.
+- The kill switch sends the Tello's emergency command, which stops the motors at once.
+
+The [project_dji_tello](https://github.com/aerostack2/project_dji_tello) repository has a complete
+setup for one or several Tellos with motion capture.

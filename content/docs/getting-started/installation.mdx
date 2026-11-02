@@ -1,0 +1,319 @@
+---
+title: Installation
+description: Install Aerostack2 from binary packages, from source, with Docker or with Pixi.
+icon: Download
+---
+
+There are four ways to install Aerostack2. They all give you the same packages; they differ in
+which systems they run on and how easy it is to change the code.
+
+| Method | ROS 2 distributions | Runs on | Choose it when |
+| --- | --- | --- | --- |
+| [Binary packages](#binary-packages) | Humble | Ubuntu 22.04 | You want to use Aerostack2 without changing it |
+| [From source](#from-source) | Humble, Jazzy | Ubuntu 22.04, 24.04 | You want to change Aerostack2 or follow the latest `main` |
+| [Docker](#docker) | Humble, Jazzy | Any host with Docker | You want to try it without touching your system |
+| [Pixi](#pixi) (preview) | Humble, Jazzy | Linux (x86-64, arm64), macOS (Apple silicon) | You don't want a system-wide ROS 2 install, or you're on macOS |
+
+## Binary packages
+
+Binary packages are published for **ROS 2 Humble** only.
+
+<Steps>
+<Step>
+
+### Install ROS 2 Humble
+
+Follow the
+[ROS 2 Humble installation guide](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html).
+It also sets up the apt repository that Aerostack2 is published to.
+
+</Step>
+<Step>
+
+### Install Aerostack2
+
+```bash
+sudo apt update
+sudo apt install ros-humble-aerostack2
+```
+
+This installs every package in the Aerostack2 repository, including the Gazebo and multirotor
+simulator platforms. To install only some of them, search for
+[aerostack2 on ROS Index](https://index.ros.org/search/?term=aerostack2&section=pkgs) and install
+each one as `ros-humble-<package-name>`, for example `ros-humble-as2-core`.
+
+</Step>
+<Step>
+
+### Install a hardware platform (optional)
+
+Real drones are supported through platform packages released separately:
+
+```bash
+sudo apt install ros-humble-as2-platform-crazyflie   # Bitcraze Crazyflie
+sudo apt install ros-humble-as2-platform-tello       # DJI Ryze Tello
+sudo apt install ros-humble-as2-platform-mavlink     # MAVLink autopilots
+sudo apt install ros-humble-as2-platform-dji-osdk    # DJI Onboard SDK
+sudo apt install ros-humble-as2-platform-dji-psdk    # DJI Payload SDK
+```
+
+The [Pixhawk](/docs/aerial-platforms/pixhawk) platform has no binary package and is built from
+source.
+
+</Step>
+<Step>
+
+### Source the environment
+
+```bash
+source /opt/ros/humble/setup.bash
+```
+
+Add this line to your `~/.bashrc` to have Aerostack2 available in every new terminal.
+
+</Step>
+</Steps>
+
+<Callout type="warn" title="Match project versions to your packages">
+  The example projects track the `main` branch of Aerostack2. With binary packages, check out the
+  project tag that matches your installed version, which `apt policy ros-humble-aerostack2` shows.
+</Callout>
+
+## From source
+
+A source build works on **ROS 2 Humble** and **ROS 2 Jazzy**.
+
+<Steps>
+<Step>
+
+### Install ROS 2 and the build tools
+
+Install ROS 2 from Debian packages, following the guide for
+[Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html) or
+[Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debians.html). Then install the
+build tools:
+
+```bash
+sudo apt install git python3-rosdep python3-pip python3-colcon-common-extensions
+```
+
+</Step>
+<Step>
+
+### Clone Aerostack2 into a workspace
+
+```bash
+mkdir -p ~/aerostack2_ws/src && cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/aerostack2.git
+```
+
+</Step>
+<Step>
+
+### Install the dependencies
+
+Source ROS 2 for your distribution:
+
+```bash tab="Humble"
+source /opt/ros/humble/setup.bash
+```
+
+```bash tab="Jazzy"
+source /opt/ros/jazzy/setup.bash
+```
+
+Then let rosdep install everything the packages depend on:
+
+```bash
+cd ~/aerostack2_ws
+sudo rosdep init   # only the first time you use rosdep on this machine
+rosdep update
+rosdep install -y -r -q --from-paths src --ignore-src
+```
+
+rosdep also installs Gazebo through `ros_gz`, so you don't need to install it separately. Humble
+gets Gazebo Fortress and Jazzy gets Gazebo Harmonic.
+
+</Step>
+<Step>
+
+### Build
+
+```bash
+cd ~/aerostack2_ws
+colcon build --symlink-install
+```
+
+`--symlink-install` links Python files and launch files instead of copying them, so edits take
+effect without rebuilding.
+
+</Step>
+<Step>
+
+### Source the workspace
+
+```bash
+source ~/aerostack2_ws/install/setup.bash
+```
+
+Run this in every new terminal, or add it to your `~/.bashrc`.
+
+</Step>
+</Steps>
+
+### Set up the Aerostack2 CLI (optional)
+
+The [`as2` command](/docs/cli) builds, tests and cleans the workspace from any directory, and
+sources it for you in new terminals:
+
+```bash
+echo 'export AEROSTACK2_PATH=$HOME/aerostack2_ws/src/aerostack2' >> ~/.bashrc
+echo 'source $AEROSTACK2_PATH/as2_cli/setup_env.bash' >> ~/.bashrc
+source ~/.bashrc
+```
+
+```bash
+as2 build
+```
+
+If you use zsh, write the same two lines to `~/.zshrc` instead.
+
+## Docker
+
+Images with Aerostack2 already built are published on
+[Docker Hub](https://hub.docker.com/u/aerostack2):
+
+| Image | Contents |
+| --- | --- |
+| `aerostack2/humble` | The latest release on ROS 2 Humble. Version tags such as `1.2.0` are also available |
+| `aerostack2/nightly-humble` | A build of `main`, updated on every commit |
+
+Start a shell in the image:
+
+```bash
+docker run -it --rm aerostack2/humble
+```
+
+Inside the container, the workspace is `/root/aerostack2_ws`, and the environment and the
+[`as2` CLI](/docs/cli) are already set up.
+
+### Run Gazebo and RViz from the container
+
+Graphical tools need access to your display. On a Linux host, allow the container to use it and
+mount your project into the container:
+
+```bash
+xhost +local:docker
+docker run -it --rm \
+  --gpus all --device /dev/dri \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd):/root/my_project \
+  aerostack2/humble
+```
+
+`--gpus all` needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Leave it out if your machine has no NVIDIA GPU.
+
+### Jazzy image
+
+The Jazzy image isn't published yet. Build it from a checkout of the repository:
+
+```bash
+git clone https://github.com/aerostack2/aerostack2.git && cd aerostack2
+docker compose -f docker/compose.yaml build jazzy
+docker run -it --rm aerostack2/jazzy
+```
+
+## Pixi
+
+<Callout type="info" title="Preview">
+  Pixi support is new. It builds Aerostack2 from a checkout of the repository, and relies on Pixi's
+  `pixi-build` feature, which is still in preview.
+</Callout>
+
+[Pixi](https://pixi.sh) installs ROS 2 and every dependency from
+[RoboStack](https://robostack.github.io) into a folder inside the repository. It doesn't change your
+system, and it runs on Linux (x86-64 and arm64) and macOS (Apple silicon).
+
+<Steps>
+<Step>
+
+### Install Pixi
+
+Version 0.83 or later is required:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+On macOS you can also use `brew install pixi`.
+
+</Step>
+<Step>
+
+### Clone Aerostack2
+
+```bash
+git clone https://github.com/aerostack2/aerostack2.git
+cd aerostack2
+```
+
+</Step>
+<Step>
+
+### Build and enter the environment
+
+Humble is the default environment:
+
+```bash tab="Humble"
+pixi install
+pixi shell
+```
+
+```bash tab="Jazzy"
+pixi install -e jazzy
+pixi shell -e jazzy
+```
+
+The first `pixi install` downloads ROS 2 and compiles every Aerostack2 package, so it takes a while.
+After that, `pixi shell` opens a shell with ROS 2 and Aerostack2 ready to use, with no setup files
+to source. Type `exit` to leave it.
+
+To run a single command without opening a shell, use `pixi run`, for example
+`pixi run ros2 pkg list`.
+
+</Step>
+</Steps>
+
+## Check the installation
+
+In a terminal where Aerostack2 is sourced, list its packages. With Docker or Pixi, run this inside
+the container or inside `pixi shell`:
+
+```bash
+ros2 pkg list | grep as2_
+```
+
+You should see `as2_core`, `as2_msgs`, `as2_python_api` and the rest of the packages:
+
+```console noCopy
+as2_alphanumeric_viewer
+as2_behavior
+as2_behavior_tree
+as2_behaviors_motion
+...
+```
+
+If nothing is listed, the environment isn't sourced in that terminal. Repeat the source step for
+your installation method.
+
+## Next steps
+
+<Cards>
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Fly a simulated drone with a short Python mission." />
+  <Card title="Fly in Gazebo" href="/docs/examples/gazebo" description="Run a full mission in a 3D simulation." />
+  <Card title="Concepts" href="/docs/concepts" description="How platforms, estimators, controllers and behaviors fit together." />
+  <Card title="Aerial platforms" href="/docs/aerial-platforms" description="Set up a real drone." />
+</Cards>

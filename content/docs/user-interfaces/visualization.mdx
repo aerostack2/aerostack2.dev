@@ -1,0 +1,99 @@
+---
+title: Visualization
+description: Show drones, their trails and their references in RViz, and fly them from the RViz teleop panel.
+icon: Eye
+---
+
+`as2_visualization` shows drones in RViz, with their 3D model, the path they've flown and the
+reference they're chasing. `as2_rviz_plugins` adds a panel to RViz with take-off, land, hover and
+kill switch buttons.
+
+## One drone
+
+```bash
+ros2 launch as2_visualization as2_visualization.launch.py \
+  namespace:=drone0 \
+  use_sim_time:=true
+```
+
+This opens RViz with the `earth` frame fixed, and starts two nodes in the drone's namespace:
+
+- `robot_state_publisher`, which publishes the drone's model for RViz's RobotModel display.
+- `marker_publisher`, which draws the trail and the reference as markers.
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `namespace` | | The drone. Required |
+| `use_sim_time` | `false` | Use simulation time |
+| `drone_model` | `quadrotor_base` | The model to show |
+| `rviz` | `true` | Open RViz. Set it to `false` when RViz is already open |
+| `rviz_config` | The package's `config/as2_default.rviz` | The RViz configuration to open |
+| `paint_markers` | `true` | Start `marker_publisher` |
+| `record_length` | 500 | How many past positions the trail keeps |
+
+The model is read from the `as2_gazebo_assets` models, such as `quadrotor_base`, `hexrotor_base`,
+`crazyflie`, `x500` or `px4vision`, or from any folder in `GZ_SIM_RESOURCE_PATH`. Your own model works
+too, as `<name>/<name>.sdf` in one of those folders.
+
+## Several drones
+
+```bash
+ros2 launch as2_visualization swarm_viz.launch.py \
+  namespace_list:=drone0,drone1,drone2 \
+  use_sim_time:=true
+```
+
+This starts the nodes for every drone and one RViz for all of them. Write the list without spaces.
+Each drone gets the default model and markers, and `swarm_viz.launch.py` takes `rviz_config` and
+`record_length` too.
+
+<Callout title="The default configuration shows drone0">
+  `as2_default.rviz` has its displays set to `drone0`. For any other namespace, or for a swarm, add
+  the other drones' displays in RViz, save the configuration and pass it as `rviz_config`.
+</Callout>
+
+## Markers
+
+`marker_publisher` reads the drone's pose and its motion reference, and draws them in the frame of
+the incoming messages:
+
+| Topic | Display in the default config | What it draws |
+| --- | --- | --- |
+| `/viz/<namespace>/last_poses` | PosesHistory | The trail of the last `record_length` positions, updated 10 times a second |
+| `/viz/<namespace>/reference_pose` | ReferencePose | A 0.1 m sphere at the position reference |
+
+Each drone gets a random color, shared by all its markers. The ReferenceVel display draws the
+measured velocity, and its arrow isn't drawn correctly for now.
+
+## Gates
+
+`gate_publisher` draws race gates from the Gazebo assets, each at a TF frame of the same name. In
+Gazebo, gates with `tf_broadcaster` turned on publish those frames.
+
+```bash
+ros2 run as2_visualization gate_publisher --namespace gate0 gate1 --use_sim_time
+```
+
+The gates are published on `/visualization_marker`, so add a Marker display for that topic in RViz.
+`--freq` is the time between updates in seconds, 1.0 by default.
+
+## Teleop panel
+
+The teleop panel flies one drone from RViz. Add it with **Panels → Add New Panel**, and pick
+`as2_rviz_plugins/Teleop`.
+
+Type the drone's namespace in **Drone ns**, without a leading slash, such as `drone0`, and press
+Enter. The namespace is saved with the RViz configuration.
+
+| Button | What it does |
+| --- | --- |
+| Takeoff | Arms the drone, switches it to offboard and takes off to 1 m at 1 m/s |
+| Land | Lands at 1 m/s |
+| Hover | Hovers in place |
+| Kill | Sends the kill switch, which stops the motors |
+
+<Callout type="warn" title="Set the namespace first">
+  Only Takeoff is disabled until a namespace is set. Pressing Land, Hover or Kill before that can
+  crash RViz. Takeoff sends the arm and offboard requests without waiting for them, so it may need a
+  second press.
+</Callout>

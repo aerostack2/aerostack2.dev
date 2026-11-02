@@ -1,0 +1,38 @@
+---
+title: Overview
+description: The ideas behind Aerostack2, and the order to read about them in.
+icon: Compass
+---
+
+These pages explain how Aerostack2 works, from the overall architecture down to each part of a
+drone's stack. They're worth reading before you write a mission for a real drone, add support for a
+new one or write your own plugins.
+
+When a mission flies a drone, every part described here takes a turn. The mission starts a behavior.
+The behavior sends motion references to the motion controller. The controller turns them into
+commands for the aerial platform, which flies the drone and reports its sensors. The state estimator
+turns those sensors into the drone's position, and the controller and behaviors use it to close the
+loop.
+
+## The big picture
+
+<Cards>
+  <Card title="Architecture" href="/docs/concepts/architecture" description="The layers of Aerostack2, one drone per namespace, and swapping components with plugins." />
+  <Card title="Communication channels" href="/docs/concepts/as2-communications" description="The standard topics every component uses, and what each control mode sends on them." />
+  <Card title="Frames" href="/docs/concepts/frames" description="The TF tree every drone shares, and which frame to use for what." />
+</Cards>
+
+## The drone's stack
+
+<Cards>
+  <Card title="Aerial platform" href="/docs/concepts/aerial-platform" description="The link to the drone or simulator, its state machine and its control modes." />
+  <Card title="Motion controller" href="/docs/concepts/motion-controller" description="How references become commands, and how control modes are agreed." />
+  <Card title="State estimator" href="/docs/concepts/state-estimator" description="Where the drone is, and which estimator plugin to choose." />
+  <Card title="Behaviors" href="/docs/concepts/behaviors" description="The skills a drone can perform, and how they're started and controlled." />
+</Cards>
+
+## Flying missions
+
+<Cards>
+  <Card title="Missions" href="/docs/concepts/missions" description="Writing a mission with the Python API, a behavior tree or the mission interpreter." />
+</Cards>

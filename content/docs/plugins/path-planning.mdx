@@ -1,0 +1,97 @@
+---
+title: Path planning
+description: The A* and Voronoi planners that find a collision-free path on an occupancy grid.
+icon: Signpost
+---
+
+The path planner behavior flies the drone to a point while avoiding obstacles. It plans a path on
+an occupancy grid with its plugin, then hands the path to the follow path behavior, which flies it.
+The grid comes from the [map server](/docs/plugins/map-server).
+
+| Plugin | Plans with | Reads from the map server |
+| --- | --- | --- |
+| `a_star` | The shortest path, with obstacles grown by a safety distance | `map` |
+| `voronoi` | A path that keeps as far from obstacles as it can | `map_filtered` |
+
+Both search the grid cell by cell, moving to any of the 8 neighbors of a cell, and treat unknown
+cells as obstacles. The path has one waypoint per cell, so with the map server's defaults they're
+0.1 m apart.
+
+The plan is made once, when the goal arrives. Obstacles seen after that aren't avoided. If no path
+is found, or the goal is outside the grid, the goal is rejected.
+
+## What has to be running
+
+- The platform, the state estimator and the motion controller, with the drone flying.
+- The [map server](/docs/plugins/map-server), already publishing a grid in the `earth` frame.
+- The follow path behavior, from the [motion behaviors](/docs/plugins/motion-behaviors). The
+  planner waits 5 seconds for it and fails without it.
+
+## Running it
+
+```bash
+ros2 launch as2_behaviors_path_planning path_planner_behavior_launch.py \
+  namespace:=drone0 \
+  plugin_name:=a_star
+```
+
+`plugin_name` is required. The other parameters can be passed as launch arguments, such as
+`safety_distance:=1.5`, or in a file given as `config_file`, which is merged over the defaults.
+
+From a mission, call it with the `navigate_to` module. The call waits until the drone arrives:
+
+```python
+drone.load_module("navigate_to")
+drone.navigate_to(5.0, 3.0, 1.0, speed=0.5)
+```
+
+Called this way, the drone turns to a yaw of 0, facing the x axis of `earth`. To keep its current
+heading, call `drone.navigate_to.navigate_to(5.0, 3.0, 1.0, 0.5)` instead.
+
+## The behavior
+
+The behavior serves the `path_planner` action, of type `as2_msgs/action/NavigateToPoint`. Pausing,
+resuming and stopping it does the same to the path being followed. Modifying a running goal isn't
+supported.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `plugin_name` | | The planner plugin. Required |
+| `safety_distance` | 1.0 | How far to keep from obstacles, in meters. Used by `a_star` only |
+| `enable_path_optimizer` | false | Reserved. The optimizer isn't implemented yet |
+| `enable_visualization` | false | Reserved. Both plugins always publish their visualization |
+
+## A*
+
+`a_star` finds the shortest path on the grid. Cells above 30 count as occupied, which with the map
+server's defaults is any cell hit at least once. Every obstacle is grown by `safety_distance` before
+the search, so the path keeps that clearance. A square of the same size around the drone is always
+treated as free, so a drone close to a wall can still leave.
+
+## Voronoi
+
+`voronoi` makes each cell cheaper the farther it is from an obstacle, so its paths run through the
+middle of open space rather than along walls. It keeps no minimum clearance, so in a narrow gap the
+path can still pass close to an obstacle. It doesn't use `safety_distance`.
+
+Only cells at 100 and unknown cells count as occupied, and the edge of the map is always blocked.
+With the map server's defaults, a cell reaches 100 after about three hits, so obstacles seen only
+once or twice are ignored.
+
+## Visualization
+
+Both plugins publish under `plugin_viz/` for RViz:
+
+| Topic | Plugin | Contents |
+| --- | --- | --- |
+| `plugin_viz/marker` | Both | The planned path, as a line |
+| `plugin_viz/obstacle_map` | `a_star` | The grid with the grown obstacles, published with each goal |
+| `plugin_viz/voronoi` | `voronoi` | The Voronoi diagram, for reference |
+| `plugin_viz/dist_field` | `voronoi` | How close each cell is to an obstacle, higher near obstacles |
+
+## Things to know
+
+- The path is flown at a fixed height of 1 m. The height of the goal isn't used yet.
+- The behavior handles one goal per run. After a goal ends, the next one reports the previous
+  result, so restart the behavior between goals.
+- The feedback's remaining distance is the distance to the next waypoint, not to the goal.

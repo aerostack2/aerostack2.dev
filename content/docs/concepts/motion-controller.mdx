@@ -1,0 +1,157 @@
+---
+title: Motion controller
+description: How Aerostack2 turns motion references into commands for the platform, and how it agrees on control modes.
+icon: Gauge
+---
+
+The motion controller sits between the behaviors and the platform. Behaviors say where the drone
+should go, as a position, a velocity or a trajectory. The controller compares that with where the
+drone is and works out the command the platform needs, at 100 Hz by default.
+
+It runs as one node per drone, `controller_manager`, which loads a single controller plugin. The node
+handles topics, control modes and frames, and the plugin holds the control law.
+
+## Inputs and outputs
+
+| Direction | Topic | What it carries |
+| --- | --- | --- |
+| In | `motion_reference/*` | The references from the active behavior. |
+| In | `self_localization/twist` and TF | The drone's state. The pose comes from the TF tree at the time of each twist. |
+| In | `platform/info` | The platform's status and current control mode. |
+| Out | `actuator_command/*` | The commands for the platform. |
+| Out | `controller/info` | The input and output control modes in use. |
+
+[Communication channels](/docs/concepts/as2-communications) shows which topics each control mode
+uses on both sides.
+
+## Input and output modes
+
+A controller works with two control modes at once. The input mode is what the behaviors send, and
+the output mode is what the platform receives. A PID speed controller can take a position reference
+and turn it into velocity commands, for example.
+
+Control modes have levels. A trajectory carries the most information and body rates the least, and
+a controller only ever goes down. It can turn a position into a velocity, but never a velocity into a
+position. Each plugin lists the modes it supports in an `available_modes.yaml` file.
+
+<ControlModeLadder />
+
+## How a mode is chosen
+
+Nobody configures the pair by hand. The controller works it out every time a behavior asks for a new
+input mode.
+
+<Steps>
+<Step>
+
+### A behavior asks for a mode
+
+Before it sends a reference, a behavior calls the controller's `set_control_mode` service with the
+mode it needs. The motion reference handlers in `as2_motion_reference_handlers` do this for you, and
+only when the mode changes.
+
+</Step>
+<Step>
+
+### The controller checks the platform
+
+The first time, the controller reads the modes the platform accepts through
+`platform/list_control_modes`.
+
+</Step>
+<Step>
+
+### It passes references through if it can
+
+With `use_bypass` on, which is the default, the controller first checks whether the platform accepts
+the requested mode as it is. If so, the plugin is skipped and the references go straight to the
+platform. With the multirotor simulator and the PID speed plugin, a go to behavior that sends
+positions is flown by the simulator's own position controller this way.
+
+</Step>
+<Step>
+
+### Otherwise it finds a pair
+
+The controller goes through the plugin's output modes in the order of its `available_modes.yaml`,
+and keeps those the platform accepts and that aren't higher than the input. It sets the first one on
+the platform with `set_platform_control_mode`, and then on the plugin. If the plugin refuses that
+pair, it tries the next.
+
+</Step>
+<Step>
+
+### It falls back to hover
+
+If no pair works, the request fails and the controller tries to put the drone in hover instead.
+`controller/info` always reports the pair in use.
+
+</Step>
+</Steps>
+
+## Hover
+
+Hover is a mode of its own. When a behavior asks for it, the controller uses the platform's hover
+mode if the platform has one and bypass is on. Otherwise it freezes the current position and yaw as
+a reference and lets the plugin hold it with its own control law. A plugin without a position loop
+can only bring the drone to a stop, so it drifts slowly while hovering.
+
+## Frames
+
+Each plugin works in fixed frames, set with the `desired_pose_frame` and `desired_twist_frame`
+parameters. By default poses are in the drone's `odom` frame and twists in `base_link`. The
+controller converts the state and every reference into those frames before the plugin sees them, so
+behaviors can send references in any frame of the TF tree.
+
+## Plugins
+
+| Plugin | Takes | Sends | Notes |
+| --- | --- | --- | --- |
+| `pid_speed_controller` | Trajectory, position, speed in a plane, speed | Speed | PID loops on position and velocity. Works with any platform that takes velocities. |
+| `differential_flatness_controller` | Trajectory | Body rates | Tracks fast trajectories. Needs the drone's mass and a platform that takes body rates. |
+| `geometric_controller` | Trajectory, position, speed | Body rates, speed | Geometric attitude control. Sends body rates when the platform takes them and velocities otherwise. |
+
+The plugin is chosen at launch with `plugin_name`, and its gains come from its own configuration
+file:
+
+```bash
+ros2 launch as2_motion_controller controller_launch.py \
+  namespace:=drone0 \
+  config_file:=config/config.yaml \
+  plugin_name:=pid_speed_controller \
+  plugin_config_file:=config/pid_speed_controller.yaml
+```
+
+## Parameters
+
+These apply to every plugin. Plugin parameters, like gains, live under the plugin's name in its own
+configuration file.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `cmd_freq` | `100.0` | How often commands are computed and sent, in Hz. |
+| `info_freq` | `10.0` | How often `controller/info` is published, in Hz. |
+| `use_bypass` | `true` | Pass references straight to the platform when it accepts them. |
+| `tf_timeout_threshold` | `0.05` | How long to wait for a transform, in seconds. |
+| `desired_pose_frame` | `""` | Frame the plugin gets poses in. Empty means `odom`. |
+| `desired_twist_frame` | `""` | Frame the plugin gets twists in. Empty means `base_link`. |
+| `debug.*` | | Topics with the state, references and compute time the plugin sees. Leave one empty to turn it off. |
+
+## Writing a plugin
+
+A controller plugin inherits from `as2_motion_controller_plugin_base::ControllerBase` and lists its
+modes in `available_modes.yaml`, under `input_control_modes` and `output_control_modes`. The only
+required method is `computeOutput`, which fills the pose, twist and thrust command for the current
+cycle.
+
+| Method | What it does |
+| --- | --- |
+| `computeOutput` | Computes the command for this cycle. Required. |
+| `onUpdateState` | Receives the drone's state. |
+| `onUpdateReference` | Receives a pose, twist, trajectory or thrust reference. |
+| `onSetMode` | Accepts or refuses an input and output mode pair. |
+| `hoverMode` | Says which mode the plugin hovers with. Unset means it can't hover. |
+| `updateParameter` | Applies a parameter change, such as new gains. |
+| `reset` | Clears the controller, like its integrators. |
+
+The [controller plugin tutorial](/docs/tutorials/controller-plugin) walks through a complete one.

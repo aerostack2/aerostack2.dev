@@ -1,0 +1,168 @@
+---
+title: Motion behaviors
+description: The plugins behind take off, land, go to, follow path and follow reference, and how to pick one.
+icon: Move3d
+---
+
+Each motion behavior does its work through a plugin, and the plugin decides how the drone moves. A
+speed plugin sends velocities, a position plugin sends a setpoint, a trajectory plugin asks the
+trajectory generator for a smooth path, and a platform plugin hands the job to the drone itself.
+What the behaviors are and how a mission uses them is on the
+[behaviors](/docs/concepts/behaviors) concept page.
+
+| Behavior | Speed | Position | Trajectory | Platform |
+| --- | --- | --- | --- | --- |
+| Take off | `takeoff_plugin_speed` | `takeoff_plugin_position` | `takeoff_plugin_trajectory` | `takeoff_plugin_platform` |
+| Land | `land_plugin_speed` | `land_plugin_position` | `land_plugin_trajectory` | `land_plugin_platform` |
+| Go to | | `go_to_plugin_position` | `go_to_plugin_trajectory` | |
+| Follow path | | `follow_path_plugin_position` | `follow_path_plugin_trajectory` | |
+| Follow reference | | `follow_reference_plugin_position` | `follow_reference_plugin_trajectory` | |
+
+## Choosing a plugin
+
+- **Position** plugins are the simplest choice. They work with the PID speed and geometric
+  controllers, which turn the setpoint into whatever the platform accepts. Differential flatness
+  only takes trajectories, so it needs the trajectory plugins.
+- **Trajectory** plugins give smooth, fast flights with speed and acceleration limits, and work with
+  every controller. They need the [trajectory generator](/docs/plugins/trajectory-generators)
+  running. Without it, they wait 2 seconds and reject the goal.
+- **Speed** plugins only exist for take-off and landing. They climb or descend at a fixed speed,
+  which is the most robust way to land.
+- **Platform** plugins use the drone's own take-off and landing, for platforms that support it. See
+  [native take-off and landing](/docs/concepts/aerial-platform#native-take-off-and-landing).
+
+There's no default plugin, so every behavior needs one. The motion behaviors launch file starts take
+off, land, go to and follow path, and finds each plugin in your configuration file:
+
+```yaml title="config/config.yaml"
+/**:
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_position"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_speed"
+  GoToBehavior:
+    ros__parameters:
+      go_to_plugin_name: "go_to_plugin_position"
+  FollowPathBehavior:
+    ros__parameters:
+      follow_path_plugin_name: "follow_path_plugin_position"
+```
+
+```bash
+ros2 launch as2_behaviors_motion motion_behaviors_launch.py \
+  namespace:=drone0 \
+  config_file:=config/config.yaml
+```
+
+Each of these keys also works as a launch argument, such as
+`takeoff_plugin_name:=takeoff_plugin_trajectory`, and so does every behavior parameter below, such as
+`go_to_speed:=1.0`.
+
+Follow reference has its own launch file. It doesn't read `config_file`, takes the plugin as the
+required `plugin_name` argument, and takes its settings as `behavior_config_file`:
+
+```bash
+ros2 launch as2_behaviors_motion follow_reference_behavior_launch.py \
+  namespace:=drone0 \
+  plugin_name:=follow_reference_plugin_position
+```
+
+## Take off
+
+| Plugin | How it climbs | Done when |
+| --- | --- | --- |
+| `takeoff_plugin_speed` | Climbs straight up at the take-off speed | Its height in `earth` is within `takeoff_threshold` of the goal height |
+| `takeoff_plugin_position` | Sends a setpoint above where it stands | Its height in `earth` is within `takeoff_threshold` of the goal height |
+| `takeoff_plugin_trajectory` | Asks for a trajectory to a point above where it stands | The trajectory ends |
+| `takeoff_plugin_platform` | Calls the platform's `platform_takeoff` service | The service replies |
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `takeoff_speed` | 0.5 | The speed when the goal gives none, in m/s |
+| `takeoff_threshold` | 0.2 | How close to the height counts as there, in meters |
+
+The speed and position plugins compare the goal height with the drone's height in `earth`, so they
+assume the drone takes off from a height of 0. The platform plugin ignores the height and speed,
+since the platform decides them. The defaults file also has `takeoff_height`, which isn't used,
+since the goal always gives the height.
+
+## Land
+
+| Plugin | How it descends | Done when |
+| --- | --- | --- |
+| `land_plugin_speed` | Descends at the land speed | It has stopped moving down |
+| `land_plugin_position` | Sends a setpoint far below, at `land_height` | It has stopped moving down |
+| `land_plugin_trajectory` | Asks for a trajectory down to `land_height` | It has stopped moving down |
+| `land_plugin_platform` | Calls the platform's `platform_land` service | The service replies |
+
+A drone counts as landed once two things hold together for `land_position_condition_time`. It has
+descended more than `land_condition_height`, and its vertical speed is below
+`land_speed_condition_percentage` of the land speed. When the landing succeeds, the behavior also
+disarms the drone.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `land_speed` | 0.5 | The speed when the goal gives none, in m/s |
+| `land_speed_condition_percentage` | 0.2 | The fraction of the land speed below which the drone counts as stopped |
+| `land_condition_height` | 0.2 | How far the drone must descend before it can count as landed, in meters |
+| `land_position_condition_time` | 1.0 | How long it must stay stopped, in seconds |
+| `land_height` | -10.0 | The height in `earth` the position and trajectory plugins aim for, in meters. Keep it well below the ground, so the drone descends until it touches down |
+
+## Go to and follow path
+
+| Plugin | How it flies |
+| --- | --- |
+| `go_to_plugin_position` | Sends the goal as a setpoint, with the speed as a limit |
+| `go_to_plugin_trajectory` | Asks for a trajectory to the goal |
+| `follow_path_plugin_position` | Sends each waypoint as a setpoint in turn, moving on once it's reached |
+| `follow_path_plugin_trajectory` | Asks for one trajectory through the whole path |
+
+Position plugins finish when the drone is within the threshold of the goal or the last waypoint.
+Trajectory plugins finish when the trajectory's time runs out, and the thresholds don't apply to
+them. All four only accept a goal while the drone is flying.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `go_to_speed`, `follow_path_speed` | 0.5 | The speed when the goal gives none, in m/s |
+| `go_to_threshold`, `follow_path_threshold` | 0.2 | How close counts as reached, in meters |
+| `go_to_threshold_z`, `follow_path_threshold_z` | 0.0 | When above 0, the threshold above checks only the horizontal distance, and this one checks the height, in meters |
+
+## Follow reference
+
+Follow reference chases a point that can move, given in any frame of the TF tree, such as another
+drone or a tracked object. It never finishes on its own and runs until it's stopped.
+
+| Plugin | How it follows |
+| --- | --- |
+| `follow_reference_plugin_position` | Converts the point on every cycle and sends it as a setpoint |
+| `follow_reference_plugin_trajectory` | Asks for a trajectory to the point and moves its end when the point moves |
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `follow_reference_max_speed_x` | 10.0 | The speed limit along x when the goal gives none, in m/s |
+| `follow_reference_max_speed_y` | 10.0 | The same along y |
+| `follow_reference_max_speed_z` | 10.0 | The same along z |
+| `follow_reference_plugin_trajectory.modify_threshold` | 0.0 | How far the point must move before the trajectory is updated, in meters. 0 updates on every change |
+| `follow_reference_plugin_trajectory.modify_frequency` | 0.0 | The most updates per second. 0 means no limit |
+
+The trajectory plugin uses the largest of the three speed limits as one limit for the whole motion.
+
+## What each plugin supports
+
+A running behavior can be paused and resumed, modified with a new goal, or stopped. Not every
+plugin supports all three:
+
+| Plugins | Pause and resume | Modify | Stop |
+| --- | --- | --- | --- |
+| Speed and position | Yes, by hovering, except take-off | Yes | Yes, by hovering |
+| Trajectory | Yes, through the trajectory generator, except take-off | Only follow reference | Only follow reference |
+| Platform | No | No | No |
+
+A trajectory plugin that refuses a stop still cancels its trajectory, so the drone stops moving, but
+the behavior ends as failed. Stopping a take-off or a landing, or one that fails, puts the platform
+in its emergency state.
+
+Every behavior also takes `tf_timeout_threshold`, how long to wait for a transform, which defaults to
+0.05 seconds.

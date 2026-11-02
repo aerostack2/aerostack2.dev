@@ -1,0 +1,15 @@
+{
+  "title": "Plugins",
+  "icon": "Puzzle",
+  "pages": [
+    "index",
+    "motion-controller",
+    "state-estimator",
+    "motion-behaviors",
+    "trajectory-generators",
+    "path-planning",
+    "map-server",
+    "payload",
+    "perception"
+  ]
+}

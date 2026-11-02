@@ -1,0 +1,23 @@
+---
+title: Overview
+description: The tools for flying drones by hand and watching their state, and when to use each one.
+icon: Compass
+---
+
+Aerostack2 ships with tools for flying a drone by hand and for watching what it's doing. They talk to
+the same topics, services and behaviors as a mission, so they can run alongside one, for example to
+watch a mission fly or to pause it.
+
+| Tool | What it's for | Drones |
+| --- | --- | --- |
+| [Keyboard teleoperation](/docs/user-interfaces/keyboard-teleoperation) | Take off, move and land from the keyboard, and pause or resume running behaviors | One or many |
+| [Alphanumeric viewer](/docs/user-interfaces/alphanumeric-viewer) | Read a drone's sensors, pose, references and modes in a terminal | One |
+| [Visualization](/docs/user-interfaces/visualization) | See the drone, its trail and its reference in RViz, with a panel for take-off, landing and the kill switch | One or many |
+
+Every tool takes the drone's namespace, and in simulation `use_sim_time`.
+
+<Cards>
+  <Card title="Keyboard teleoperation" href="/docs/user-interfaces/keyboard-teleoperation" description="Fly one or many drones from the keyboard, in speed or position steps." />
+  <Card title="Alphanumeric viewer" href="/docs/user-interfaces/alphanumeric-viewer" description="A terminal view of one drone's state, in four tabs." />
+  <Card title="Visualization" href="/docs/user-interfaces/visualization" description="The drone model, its trail and its reference in RViz, plus a teleop panel." />
+</Cards>

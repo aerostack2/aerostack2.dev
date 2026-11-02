@@ -1,0 +1,110 @@
+---
+title: Gazebo
+description: Simulate drones in 3D worlds with cameras, lidars, GPS, gimbals and grippers.
+icon: Box
+---
+
+[Gazebo](https://gazebosim.org) simulates drones in a 3D world with physics and sensors. Use it when
+a mission needs to see something, such as a camera, a lidar or ArUco markers, or when several drones
+share a world. Aerostack2 uses Gazebo Fortress on ROS 2 Humble and Gazebo Harmonic on ROS 2 Jazzy,
+which rosdep installs along with Aerostack2.
+
+Two packages work together:
+
+- `as2_gazebo_assets` builds the world from a configuration file, spawns the drones and their sensors,
+  and bridges their topics to ROS 2.
+- `as2_platform_gazebo` is the aerial platform. One runs per drone and sends its commands to Gazebo.
+
+## Launch
+
+Start the simulation once, then one platform per drone:
+
+```bash
+ros2 launch as2_gazebo_assets launch_simulation.py \
+  simulation_config_file:=config/world.yaml
+
+ros2 launch as2_platform_gazebo platform_gazebo_launch.py \
+  namespace:=drone0 \
+  simulation_config_file:=config/world.yaml \
+  platform_config_file:=config/config.yaml
+```
+
+The simulation opens the Gazebo window by default. With `headless:=true` it runs without one, and
+you can attach the window later with `gz sim -g` on Harmonic or `ign gazebo -g` on Fortress.
+
+## The world file
+
+The simulation configuration file, in YAML or JSON, describes the world, the drones and what each
+drone carries:
+
+```yaml title="config/world.yaml"
+world_name: "empty"
+origin:
+  latitude: 40.4405287
+  longitude: -3.6898277
+  altitude: 100.0
+drones:
+  - model_type: "quadrotor_base"
+    model_name: "drone0"
+    xyz: [0.0, 0.0, 0.3]
+    flight_time: 60
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "hd_camera"
+        model_name: "camera"
+        xyz: [0.1, 0.0, 0.0]
+```
+
+`model_name` becomes the drone's namespace. `flight_time` gives the drone a battery that lasts that
+many minutes, and leaving it out means no battery. `origin` places the world on the globe for GPS.
+An `objects` list can add more models to the world, such as gates or markers.
+
+| | Available models |
+| --- | --- |
+| Drones | `quadrotor_base`, `hexrotor_base`, `x500`, `px4vision`, `f330`, `crazyflie`, `quadrotor_cvar_racing` |
+| Cameras | `vga_camera`, `hd_camera`, `semantic_camera`, `grayscale_camera`, `rgbd_camera`, `d435` |
+| Lidars | `planar_lidar`, `lidar_3d`, `point_lidar` |
+| Other sensors | `gps`, `air_pressure`, `magnetometer` |
+| Gimbals | `gimbal_speed`, `gimbal_position`, each carrying a camera as its own payload |
+| Grippers | `suction_gripper`, `two_fingers_gripper` |
+
+Each sensor publishes under `sensor_measurements/` with its name, so a camera called `camera` on
+`drone0` publishes `/drone0/sensor_measurements/camera/image_raw` and `camera_info`. Every drone also
+publishes its IMU and ground truth, and its battery when it has one. There's no odometry topic,
+so use the ground truth estimator.
+
+## Control modes
+
+By default the Gazebo platform takes velocity commands, with the yaw as a yaw rate, plus hover. That
+fits the PID speed controller. For controllers that send body rates, like differential flatness,
+launch the platform with the body rates control modes file that ships with the package:
+
+```bash
+ros2 launch as2_platform_gazebo platform_gazebo_launch.py \
+  namespace:=drone0 \
+  simulation_config_file:=config/world.yaml \
+  control_modes_file:=$(ros2 pkg prefix as2_platform_gazebo)/share/as2_platform_gazebo/config/control_modes_acro.yaml
+```
+
+## With the rest of the stack
+
+Gazebo roots each drone's TF tree at the bare model name, `drone0` rather than `drone0/base_link`.
+Set the base frame to an empty name so it resolves to the namespace:
+
+```yaml title="config/config.yaml"
+/**:
+  ros__parameters:
+    use_sim_time: true
+  state_estimator:
+    ros__parameters:
+      base_frame_id: ""
+      plugin_name: "ground_truth"
+      ground_truth:
+        twist_sub_topic: "ground_truth/twist"
+```
+
+Gazebo publishes the simulation clock, so every node should run with `use_sim_time` on.
+
+The [project_gazebo](https://github.com/aerostack2/project_gazebo) repository has a complete setup
+with every component, a ground station and example missions for one or several drones.

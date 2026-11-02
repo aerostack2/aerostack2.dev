@@ -1,0 +1,80 @@
+---
+title: Overview
+description: What Aerostack2 is, what you need to run it, and where to start.
+icon: Compass
+---
+
+Aerostack2 is a ROS 2 framework for building autonomous aerial systems, from a single drone to a
+swarm. Your mission code talks to a standard set of interfaces, and each drone sits behind an
+_aerial platform_ that hides the hardware. Moving from simulation to a real Crazyflie, Tello or PX4
+drone means changing the platform, not the mission.
+
+## How the pieces fit
+
+Every drone runs the same stack of components, each one a ROS 2 node you can swap through plugins:
+
+| Component | What it does |
+| --- | --- |
+| [Aerial platform](/docs/concepts/aerial-platform) | Connects to the simulator or the flight controller, and publishes sensor data |
+| [State estimator](/docs/concepts/state-estimator) | Works out where the drone is, from odometry, ground truth or an EKF |
+| [Motion controller](/docs/concepts/motion-controller) | Turns position, speed or trajectory references into commands the platform accepts |
+| [Behaviors](/docs/concepts/behaviors) | Self-contained skills such as take off, go to, follow a path or land |
+| Your mission | A Python script using the [Python API](/docs/api), or a behavior tree, that calls those behaviors |
+
+The [architecture](/docs/concepts/architecture) page covers this in more depth. You don't need it to
+get started.
+
+## Requirements
+
+Aerostack2 supports two ROS 2 distributions:
+
+- **ROS 2 Humble** on Ubuntu 22.04
+- **ROS 2 Jazzy** on Ubuntu 24.04
+
+You don't need a drone. Aerostack2 ships with two simulators, Gazebo and a lightweight multirotor
+simulator, so you can fly your first mission on a laptop.
+
+With Pixi you can also build Aerostack2 on macOS (Apple silicon) without a system-wide ROS
+installation. [Installation](/docs/getting-started/installation) compares all the methods.
+
+## Where to start
+
+<Steps>
+<Step>
+
+### Install Aerostack2
+
+Pick binary packages, a source build, Docker or Pixi, and check that the packages are found.
+See [Installation](/docs/getting-started/installation).
+
+</Step>
+<Step>
+
+### Fly in simulation
+
+Follow the [Quickstart](/docs/getting-started/quickstart) to fly a simulated drone with a short
+Python mission. Then try the [examples](/docs/examples), including a full 3D simulation in
+[Gazebo](/docs/examples/gazebo).
+
+</Step>
+<Step>
+
+### Learn the concepts
+
+Read [Concepts](/docs/concepts) to understand platforms, estimators, controllers and behaviors,
+and how they talk to each other.
+
+</Step>
+<Step>
+
+### Move to real hardware
+
+Pick your drone in [Aerial platforms](/docs/aerial-platforms) and run the same mission on it.
+
+</Step>
+</Steps>
+
+## License
+
+Aerostack2 is open source under the [BSD 3-Clause license](/docs/about/license). If you use it in
+academic work, see [Citations](/docs/about/citations).

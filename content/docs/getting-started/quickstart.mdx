@@ -1,0 +1,195 @@
+---
+title: Quickstart
+description: Fly a simulated drone with a short Python mission in about ten minutes.
+icon: Zap
+---
+
+In this guide you start a simulated drone and fly it around a square with a Python script. It uses
+the multirotor simulator, a lightweight simulator that doesn't need Gazebo, and the ready-made
+[multirotor simulator project](https://github.com/aerostack2/project_as2_multirotor_simulator).
+
+## Before you start
+
+- **Aerostack2 is installed.** Any method in [Installation](/docs/getting-started/installation)
+  works. Keep the environment sourced in each terminal you open, or use `pixi run` as shown below.
+- **tmux and tmuxinator are installed.** The project uses them to start every component in its own
+  terminal pane. The Docker images already include them.
+
+```bash tab="Ubuntu"
+sudo apt install tmux tmuxinator
+```
+
+```bash tab="macOS"
+brew install tmux tmuxinator
+```
+
+## Fly your first mission
+
+<Steps>
+<Step>
+
+### Get the project
+
+```bash
+git clone https://github.com/aerostack2/project_as2_multirotor_simulator.git
+cd project_as2_multirotor_simulator
+```
+
+A project holds the configuration files, launch scripts and missions for one application. Every
+Aerostack2 example is organized this way.
+
+</Step>
+<Step>
+
+### Start the drone
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+With Pixi, the first run downloads and builds the environment for the project, so it takes a
+while.
+
+This opens a tmux session called `drone0` with one window per group of components:
+
+| Window | What runs there |
+| --- | --- |
+| `platform` | The multirotor simulator, acting as the drone's [aerial platform](/docs/concepts/aerial-platform) |
+| `basics_robotics_functions` | The [state estimator](/docs/concepts/state-estimator) and the [motion controller](/docs/concepts/motion-controller) |
+| `behaviors` | Take off, land, go to, follow path, trajectory generation and gimbal [behaviors](/docs/concepts/behaviors) |
+| `mission_execution` | The behavior tree runner, used by `mission_behavior_tree.py` |
+| `mission_monitoring` | The [alphanumeric viewer](/docs/user-interfaces/alphanumeric-viewer), which shows the drone's state |
+
+You land on `mission_monitoring`. Press `Ctrl-b` followed by a window number to look at the
+others.
+
+</Step>
+<Step>
+
+### Open the ground station (optional)
+
+In a second terminal, from the project folder:
+
+```bash tab="apt, source or Docker"
+./launch_ground_station.bash
+```
+
+```bash tab="Pixi"
+pixi run ground-station
+```
+
+This opens RViz, where you can watch the drone move.
+
+</Step>
+<Step>
+
+### Run the mission
+
+In another terminal, from the project folder:
+
+```bash tab="apt, source or Docker"
+python3 mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 mission.py
+```
+
+The drone arms, takes off to 1 m and flies around a 4 × 4 m square twice. On the second lap it
+turns to face the direction it's flying. Then it lands. The script reports each step as it goes:
+
+```console noCopy
+Running mission for drone drone0
+Start mission
+Arm
+Arm success: True
+Offboard
+Offboard success: True
+Take Off
+Take Off success: True
+Run mission
+Go to with keep yaw [-2.0, 2.0, 1.0]
+Go to success: True
+...
+Land
+Land success: True
+Manual
+Manual success: True
+Clean exit
+```
+
+</Step>
+<Step>
+
+### Stop everything
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+This closes the drone and ground station sessions.
+
+</Step>
+</Steps>
+
+## What the mission does
+
+Without the printing and error checks, `mission.py` comes down to this:
+
+```python title="mission.py (simplified)"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.0, speed=1.0)
+
+square = [[-2.0, 2.0, 1.0], [-2.0, -2.0, 1.0], [2.0, -2.0, 1.0], [2.0, 2.0, 1.0]]
+for point in square:
+    drone.go_to.go_to_point(point, speed=1.0)
+
+drone.land(speed=0.5)
+drone.manual()
+
+drone.shutdown()
+rclpy.shutdown()
+```
+
+- `DroneInterface` connects to the drone running under the `drone0` namespace.
+- `arm()` starts the motors, and `offboard()` hands control of the drone to Aerostack2.
+- `takeoff()`, `go_to.go_to_point()` and `land()` each run a behavior. They wait until the
+  behavior finishes and return `True` if it succeeded.
+- Points are `[x, y, z]` in metres, in the drone's `earth` frame. The drone starts at the origin.
+- `manual()` hands control back to the platform, and `shutdown()` closes the connection.
+
+Try changing the points or the speeds, then run the mission again. The drone stack doesn't need
+restarting between runs.
+
+## Next steps
+
+The project includes more missions. Run them the same way as `mission.py`:
+
+| Mission | What it shows |
+| --- | --- |
+| `mission_behavior_tree.py` | Starts the behavior tree in `trees/square.xml`, which the drone loaded at launch, and flies a 3 × 3 m square |
+| `mission_interpreter.py` | A mission written as JSON and run by the mission interpreter |
+| `mission_gps.py` | Flying to GPS coordinates instead of local positions |
+| `mission_swarm.py` | Several drones at once. Start the drones with `./launch_as2.bash -m` and the ground station with `./launch_ground_station.bash -m` first |
+
+<Cards>
+  <Card title="Fly in Gazebo" href="/docs/examples/gazebo" description="The same missions in a full 3D simulation." />
+  <Card title="Concepts" href="/docs/concepts" description="How platforms, estimators, controllers and behaviors fit together." />
+  <Card title="Python API" href="/docs/api" description="Everything DroneInterface can do." />
+  <Card title="Aerial platforms" href="/docs/aerial-platforms" description="Run your mission on a real drone." />
+</Cards>

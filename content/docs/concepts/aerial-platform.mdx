@@ -1,0 +1,155 @@
+---
+title: Aerial platform
+description: How Aerostack2 talks to a drone or simulator, when it sends commands, and the state machine every platform runs.
+icon: PlaneTakeoff
+---
+
+The aerial platform is the bottom of the stack and the only part that knows what kind of drone it's
+flying. Everything above it speaks Aerostack2. The platform translates that into the protocol of a
+PX4 autopilot, a Crazyflie, a DJI drone or a simulator.
+
+A platform has five jobs.
+
+1. It sends the motion controller's actuator commands to the drone.
+2. It publishes the drone's sensors, such as the IMU, odometry, GPS and cameras.
+3. It arms and disarms the motors and switches offboard control on and off.
+4. It tells the rest of the stack which control modes the drone accepts.
+5. It reports its status and runs the platform state machine.
+
+Every platform is a node built on `as2::AerialPlatform` from `as2_core`. The base class does the
+common work, like the services, the state machine and the command loop, and each platform fills in
+what is specific to its drone. Changing the platform is what takes a mission from simulation to a
+real drone.
+
+## Ready to fly
+
+The platform runs a command loop at the frequency set by `cmd_freq`, 100 Hz by default. On every cycle it
+sends the latest actuator command to the drone, but only when four conditions hold.
+
+<ReadyToFly />
+
+Until then commands are dropped without an error, which is the usual reason a drone that should move
+doesn't. The platform reports the connection itself, and a mission takes care of the other three:
+
+```python
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.0, speed=0.5)
+```
+
+The take-off is usually the first behavior to run, so it's the one that has the motion controller set
+the control mode. `drone.manual()` turns offboard control off and hands the drone back to the
+autopilot or the pilot.
+
+## The state machine
+
+Every platform runs the same state machine, which tracks where the drone is in its flight. The
+current state is published in the `status` field of `platform/info`. The go to, follow path and
+follow reference behaviors read it and reject goals while the drone isn't flying.
+
+<PlatformStateMachine />
+
+Events come from three places. Arming and disarming raise their own events when they succeed. The
+take-off and land behaviors send the others through the `platform/state_machine_event` service. Alerts
+and failures send the drone into emergency.
+
+<Callout type="warn" title="Emergency is final">
+  No event leads out of the emergency state, so the platform has to be restarted. Any take-off or
+  landing that doesn't succeed also ends in emergency, and that includes one you cancel.
+</Callout>
+
+## Control modes
+
+A control mode says what kind of command the platform receives, such as a position, a velocity or
+body rates and thrust, together with how the yaw is given. The motion references and actuator
+commands each mode uses are described in
+[Communication channels](/docs/concepts/as2-communications#motion-references).
+
+Each platform lists the modes its drone accepts in a control modes file, given by the
+`control_modes_file` parameter. Drones differ a lot here. The multirotor simulator takes everything
+from body rates to full trajectories, while the Gazebo platform only takes velocities.
+
+```yaml title="as2_platform_gazebo/config/control_modes.yaml"
+available_modes:
+  - 0b00010000 # HOVER
+  - 0b01000100 # SPEED with yaw SPEED
+```
+
+The platform doesn't choose a mode itself. When a behavior asks for one, the motion controller reads
+the platform's list through the `platform/list_control_modes` service and picks a pair that works. Its
+plugin takes the behavior's mode as input and produces one the platform accepts. If the platform
+already accepts the behavior's mode, the controller can step aside and pass the references straight
+through. The [motion controller](/docs/concepts/motion-controller) page has the details.
+
+When the mode changes, the platform also says which frame it wants its commands in. The base class
+transforms every command into that frame before handing it over, so a platform that expects
+velocities in the body frame receives them that way whatever frame the controller used.
+
+## Native take-off and landing
+
+Most take-offs and landings are flown by Aerostack2. The take-off behavior climbs with the motion
+controller, and the land behavior descends until the drone stops moving down.
+
+Some drones can take off and land by themselves, like an autopilot with its own take-off routine.
+A platform that supports this implements a native take-off and landing, offered through the
+`platform_takeoff` and `platform_land` services. The behaviors use them when you pick the platform
+plugins:
+
+```yaml title="config/config.yaml"
+/**:
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_platform"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_platform"
+```
+
+The multirotor simulator and Gazebo both support it. On Gazebo it's off by default and turned on with
+the `enable_takeoff_platform` and `enable_land_platform` parameters.
+
+## Emergencies
+
+The platform listens on `alert_event` and acts on two alerts. A kill switch cuts the motors right
+away, and the drone falls. An emergency hover stops the drone where it is. Both put the platform in
+the emergency state, where it keeps sending a stop command on every cycle instead of the
+controller's commands.
+
+The other emergency alerts aren't acted on yet. See [Alerts](/docs/concepts/as2-communications#alerts)
+for the full list.
+
+## Available platforms
+
+Gazebo and the multirotor simulator ship with Aerostack2. The others live in their own repositories.
+
+<Cards>
+  <Card title="Gazebo" href="/docs/aerial-platforms/gazebo-simulation" description="3D simulation with sensors and worlds." />
+  <Card title="Multirotor simulator" href="/docs/aerial-platforms/multirotor-simulator" description="A lightweight dynamics simulator, used in the Quickstart." />
+  <Card title="Pixhawk" href="/docs/aerial-platforms/pixhawk" description="Drones with a PX4 autopilot." />
+  <Card title="MAVLink" href="/docs/aerial-platforms/mavlink" description="PX4 autopilots over MAVLink, through MAVROS." />
+  <Card title="Crazyflie" href="/docs/aerial-platforms/crazyflie" description="Bitcraze nano quadcopters." />
+  <Card title="DJI OSDK" href="/docs/aerial-platforms/dji-osdk" description="DJI drones through the Onboard SDK." />
+  <Card title="DJI PSDK" href="/docs/aerial-platforms/dji-psdk" description="DJI drones through the Payload SDK." />
+  <Card title="Ryze Tello" href="/docs/aerial-platforms/ryze-tello" description="The Tello toy drone over Wi-Fi." />
+  <Card title="Betaflight" href="/docs/aerial-platforms/betaflight" description="Flight controllers running Betaflight. Deprecated." />
+</Cards>
+
+## Writing a platform
+
+To support a new drone, write a node that inherits from `as2::AerialPlatform` and implements the
+parts that depend on the drone.
+
+| Method | What it does |
+| --- | --- |
+| `configureSensors` | Creates the sensors the platform publishes. |
+| `ownSendCommand` | Sends the latest actuator command to the drone. |
+| `ownSetArmingState` | Arms or disarms the motors. |
+| `ownSetOffboardControl` | Turns offboard control on or off. |
+| `ownSetPlatformControlMode` | Switches the drone to a control mode and sets the frames its commands use. |
+| `ownKillSwitch` | Cuts the motors. |
+| `ownStopPlatform` | Stops the drone where it is. |
+| `ownTakeoff`, `ownLand` | Native take-off and landing. Optional, since they return false unless overridden. |
+
+Everything else, from the services and the state machine to the command loop and the frame
+conversion, comes from the base class. The [platform tutorial](/docs/tutorials/aerial-platform) walks
+through a complete one.

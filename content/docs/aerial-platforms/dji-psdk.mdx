@@ -1,0 +1,128 @@
+---
+title: DJI PSDK
+description: Fly DJI Matrice 300, Matrice 350 and M30 drones through the DJI Payload SDK.
+icon: PlaneTakeoff
+---
+
+<Callout title="ROS 2 Humble only">
+  The DJI PSDK platform isn't supported on ROS 2 Jazzy yet. Build it on Humble.
+</Callout>
+
+The DJI PSDK platform flies DJI enterprise drones through the
+[DJI Payload SDK](https://github.com/dji-sdk/Payload-SDK). It works with the Matrice 300 RTK, the
+Matrice 350 RTK and the M30 series. The companion computer is mounted on the drone's E-Port, and the
+SDK is reached through [psdk_ros2](https://github.com/umdlife/psdk_ros2), a ROS 2 wrapper for
+it. The platform talks to the wrapper's topics and services, and the drone takes off and lands by itself.
+
+## Install
+
+Follow psdk_ros2's [getting started](https://umdlife.github.io/psdk_ros2/) guide to install the
+wrapper and the Payload SDK. The platform targets psdk_ros2 1.3. Register an app on the
+[DJI developer site](https://developer.dji.com) to get its name, ID, key and license.
+
+Then build the platform in the same workspace:
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_dji_psdk.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install --packages-up-to as2_platform_dji_psdk
+```
+
+## Connect the drone
+
+The E-Port link is a UART for telemetry and commands, plus a USB link for the camera and other data.
+The drone decides how that USB link works:
+
+| Drone | USB role of the computer | Link in `link_config.json` |
+| --- | --- | --- |
+| Matrice 300 RTK | Host | `use_uart_and_usb_bulk_device` |
+| Matrice 350 RTK, M30 | Device | `use_uart_and_network_device` |
+
+On a Jetson used as a USB device, the network interface is usually `l4tbr0`. Set it as the
+`network_device_name` in the link configuration file. The shipped file uses USB bulk, with the UART
+on `/dev/ttyUSB0`.
+
+## Launch
+
+Start the wrapper with your app credentials, then the platform:
+
+```yaml title="config/psdk_authentication.yaml"
+/**:
+  ros__parameters:
+    app_name: "YourPSDK"
+    app_id: "YourID"
+    app_key: "YourAppKey"
+    app_license: "YourAppLicense"
+    developer_account: "YourDeveloperAccount"
+    baudrate: "921600"
+```
+
+```bash
+ros2 launch as2_platform_dji_psdk psdk_wrapper.launch.py \
+  namespace:=drone0 \
+  psdk_authentication_params_file:=config/psdk_authentication.yaml \
+  link_config_file_path:=config/link_config.json
+
+ros2 launch as2_platform_dji_psdk as2_platform_dji_psdk.launch.py namespace:=drone0
+```
+
+The wrapper launch also remaps the wrapper's GPS, IMU and main camera to Aerostack2's sensor topics.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 30.0 | How often commands are sent, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `enable_camera` | false | Start streaming the main camera |
+| `enable_gimbal` | false | Reset the gimbal at startup and accept gimbal commands |
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Hover | |
+| Speed | Rate |
+
+That fits the PID speed controller. Velocities are sent in the `odom` frame.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | The drone's fused position and velocity, from where it was armed |
+| `sensor_measurements/gps` | GPS fixes |
+| `sensor_measurements/imu` | The IMU |
+| `sensor_measurements/main_camera/image_raw` | The main camera, with `enable_camera` on |
+| `platform/info` | The platform status |
+
+With `enable_gimbal` on, the gimbal is commanded on `platform/gimbal/gimbal_command`, by angle or by
+speed.
+
+## With the rest of the stack
+
+Use the `raw_odometry` estimator plugin on the drone's odometry, and the platform's own take-off and
+landing:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_platform"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_platform"
+```
+
+## Things to know
+
+- Arming doesn't start the motors. It sets the origin of the odometry at the drone's current
+  position. The motors start when the drone takes off.
+- The kill switch and stopping the platform both hand control back to the remote control. Neither
+  stops the motors, so the pilot has to be ready to fly.
+
+The [project_dji_psdk](https://github.com/aerostack2/project_dji_psdk) repository has a complete setup
+for a Matrice drone.

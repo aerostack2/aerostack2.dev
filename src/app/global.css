@@ -1,0 +1,549 @@
+@import "tailwindcss";
+@import "./theme-linear.css";
+/* `preset.css` already includes docs/flux/home/notebook/shared. It does NOT
+   include glass — if you ever switch back to GlassLayout, add
+   `@import "fumadocs-ui/css/generated/glass.css";` here or it renders unstyled. */
+@import "fumadocs-ui/css/preset.css";
+
+/* IBM Plex Sans for text, IBM Plex Mono for code and IBM Plex Serif for
+   display headings. The `--font-plex-*` variables are set on <html> by
+   `next/font` (src/lib/fonts.ts). `inline` makes the utilities use these
+   values directly instead of a theme variable that would point at them. The
+   system stacks after each are fallbacks while the fonts load. */
+@theme inline {
+  --font-sans: var(--font-plex-sans), system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-serif: var(--font-plex-serif), ui-serif, Georgia, "Times New Roman",
+    serif;
+}
+
+/* Squarer corners than Tailwind's defaults, across the docs and the home
+   page. Fumadocs builds its cards, code blocks, tables and callouts from
+   these same tokens. */
+@theme {
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.75rem;
+}
+
+html {
+  scrollbar-gutter: stable;
+  font-optical-sizing: auto;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Glass exposes no sidebar `components` slot, so the section headings are
+   styled here. Every section is a collapsible folder now, whose trigger is the
+   folder trigger. `data-panel-open` is NOT usable here: it vanishes when the
+   folder is collapsed. `aria-expanded` is always present on the triggers, and
+   `:not([aria-haspopup])` excludes the search and popover buttons.
+   Uppercase but unbolded. */
+/* `SidebarFolderTrigger` rotates its chevron from the folder's own internal
+   state, which `AccordionFolder` overrides — so drive it from `aria-expanded`,
+   which reflects the real Collapsible state. */
+#nd-sidebar button[aria-expanded]:not([aria-haspopup]) svg[data-icon] {
+  transition: transform 150ms ease;
+}
+#nd-sidebar button[aria-expanded="false"]:not([aria-haspopup]) svg[data-icon] {
+  transform: rotate(-90deg);
+}
+#nd-sidebar button[aria-expanded="true"]:not([aria-haspopup]) svg[data-icon] {
+  transform: none;
+}
+
+#nd-sidebar button[aria-expanded]:not([aria-haspopup]) {
+  font-weight: 400;
+  /* Titles are already title-cased in each `meta.json`, so no `text-transform`
+     — `capitalize` would be redundant and `uppercase` mangles nothing but reads
+     louder than wanted. */
+  /* Matches the page rows, which inherit the sidebar's `text-sm`. */
+  font-size: 0.875rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+/* Diagrams drawn with React Flow (src/components/diagrams/flow-diagram.tsx).
+   The active channel's edges get moving dashes to show the direction of
+   data. */
+.flow-diagram .react-flow__pane {
+  cursor: default;
+}
+.flow-diagram .react-flow__edge-path.flow-edge-active {
+  stroke-dasharray: 6 5;
+  animation: flow-dash 0.9s linear infinite;
+}
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-diagram .react-flow__edge-path.flow-edge-active {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
+.flow-diagram .react-flow__attribution {
+  background: transparent;
+  font-size: 10px;
+}
+.flow-diagram .react-flow__attribution a {
+  color: var(--color-fd-muted-foreground);
+}
+
+/* Subtle scrollbars everywhere: a thin thumb in the muted text colour on a
+   transparent track. Browsers that support `scrollbar-color` (Firefox,
+   Chrome 121+) use the standard properties; Safari uses the WebKit
+   pseudo-elements. */
+:root {
+  --scrollbar-thumb: color-mix(
+    in oklab,
+    var(--color-fd-muted-foreground) 30%,
+    transparent
+  );
+  --scrollbar-thumb-hover: color-mix(
+    in oklab,
+    var(--color-fd-muted-foreground) 55%,
+    transparent
+  );
+}
+@supports (scrollbar-color: auto) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+/* Home page (src/app/(home)/page.tsx). The hero sits on a square grid that
+   fades out towards the edges. */
+.home-grid {
+  --home-grid-size: 56px;
+  background-image:
+    linear-gradient(to right, var(--color-fd-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-fd-border) 1px, transparent 1px);
+  background-size: var(--home-grid-size) var(--home-grid-size);
+  background-position: center;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+/* The editor mockup (src/components/home/editor-window.tsx). Line numbers come
+   from a CSS counter, and the line the cursor is on is tinted. */
+.home-editor .shiki {
+  --padding-left: 0.5rem;
+  counter-reset: line;
+  font-size: inherit;
+  line-height: 1.6;
+}
+.home-editor .shiki .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 1.75rem;
+  margin-right: 1.25rem;
+  text-align: right;
+  color: var(--color-fd-muted-foreground);
+  opacity: 0.6;
+}
+.home-editor .shiki .line:nth-child(10) {
+  background: color-mix(in oklab, var(--color-fd-accent) 70%, transparent);
+}
+.home-caret {
+  animation: home-caret 1.1s steps(1) infinite;
+}
+@keyframes home-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Diagonal hatching behind the editor. */
+.home-hatch {
+  background-color: var(--color-fd-card);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-fd-border) 0 1px,
+    transparent 1px 9px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-caret {
+    animation: none;
+  }
+}
+
+/* Platform logos on the home page. The image only supplies the shape, through
+   its alpha; the colour is the element's text colour. */
+.home-logo {
+  background-color: currentColor;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+}
+
+/* Buttons: small square-ish keys with a darker band along the bottom edge,
+   which disappears on hover so the key looks pressed. The primary button keeps
+   the light accent, #1348dc, in both themes, since white text reads well on it
+   either way. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid;
+  border-radius: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 150ms,
+    box-shadow 150ms;
+}
+.button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.button-primary {
+  background-color: #1348dc;
+  color: #ffffff;
+  border-color: rgb(48 128 255 / 0.4);
+  box-shadow:
+    inset 0 -2px 0 0 hsl(219 93% 30%),
+    0 1px 3px 0 hsl(219 93% 95%);
+}
+.button-primary:hover {
+  background-color: hsl(219 93% 35%);
+}
+.dark .button-primary {
+  box-shadow:
+    inset 0 -2px 0 0 hsl(219 93% 30%),
+    0 1px 3px 0 rgb(0 0 0 / 0.2);
+}
+.button-secondary {
+  background-color: #e5e5e5;
+  color: #262626;
+  border-color: rgb(161 161 161 / 0.5);
+  box-shadow:
+    inset 0 -2px 0 0 hsl(0 0% 82%),
+    0 1px 3px 0 hsl(0 0% 95%);
+}
+.button-secondary:hover {
+  background-color: hsl(0 0% 83%);
+}
+/* Tinted with the dark theme's hue (theme-linear.css) so it sits on the page. */
+.dark .button-secondary {
+  background-color: hsl(222 13% 18%);
+  color: #edeef3;
+  border-color: hsl(222 12% 30% / 0.5);
+  box-shadow:
+    inset 0 -2px 0 0 hsl(222 14% 13%),
+    0 1px 3px 0 rgb(0 0 0 / 0.2);
+}
+.dark .button-secondary:hover {
+  background-color: hsl(222 13% 21%);
+}
+/* Last, so it wins over the theme-specific shadows above. */
+.button:is(:hover, :active) {
+  box-shadow: none;
+}
+
+/* Home page footer (src/components/home/footer.tsx). A faint grain over the
+   blue, and the big wordmark at low opacity, fading out towards the bottom. */
+.home-footer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.08;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.home-footer-wordmark svg {
+  opacity: 0.16;
+  mask-image: linear-gradient(to bottom, black 35%, transparent 100%);
+}
+
+/* Docs pages share the home page's type. The page title and section label
+   are set in src/app/docs/[[...slug]]/page.tsx; these cover the MDX body.
+   Fumadocs' prose rules sit behind :where(), so these plain selectors win. */
+.prose h2 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.75em;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+.prose a:not([data-card]) {
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(
+    in oklab,
+    var(--color-fd-primary) 35%,
+    transparent
+  );
+  transition: text-decoration-color 150ms;
+}
+.prose a:not([data-card]):hover {
+  opacity: 1;
+  text-decoration-color: var(--color-fd-primary);
+}
+.prose hr {
+  border-top-style: dashed;
+}
+/* Card titles in the serif, like the link cards at the bottom of the home
+   page. */
+[data-card] > h3 {
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  font-weight: 400;
+}
+/* "On this page", as a mono label. */
+#toc-title {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Hairline line figures on the home page (components/home/line-figure.tsx),
+   coloured from the theme so they follow light and dark mode. The plate is
+   the fill the figure's surfaces sit on, so it has to match the background
+   behind the figure. What the pointer lights up takes the accent blue. */
+.line-figure {
+  --hairline-plate: var(--color-fd-background);
+  --hairline-hi: var(--color-fd-primary);
+  --hairline-edge: color-mix(
+    in oklab,
+    var(--color-fd-foreground) 70%,
+    transparent
+  );
+  --hairline-mid: var(--color-fd-muted-foreground);
+  --hairline-lo: var(--color-fd-border);
+  --hairline-stroke: 0.9;
+}
+
+/* Our own line figures (components/home/figures), drawn Hairline's way and
+   coloured from the same variables, so they sit beside its figures. */
+[data-line-art] {
+  position: relative;
+  touch-action: pan-y;
+  user-select: none;
+}
+[data-line-art] > svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+[data-line-art] path {
+  fill: none;
+  stroke: var(--hairline-mid);
+  stroke-width: var(--hairline-stroke);
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+[data-line-art] .sil {
+  fill: var(--hairline-plate);
+  stroke: var(--hairline-edge);
+}
+[data-line-art] .lo {
+  stroke: var(--hairline-lo);
+}
+[data-line-art] .pin {
+  stroke: var(--hairline-edge);
+}
+[data-line-art] .disc {
+  stroke: var(--hairline-mid);
+}
+[data-line-art] .hi {
+  stroke: var(--hairline-hi);
+}
+[data-line-art] .dash {
+  stroke-dasharray: 1 3;
+}
+
+/* The hero (components/home/hero/hero-art.tsx): line-art drones, each lit in
+   its colour (--c) as a pulse reaches it. Every part runs on one loop of
+   --cycle; --d is when a pulse leaves, --a when it arrives. */
+.hero-art circle {
+  vector-effect: non-scaling-stroke;
+}
+.hero-art circle.sil {
+  fill: var(--hairline-plate);
+  stroke: var(--hairline-edge);
+  stroke-width: var(--hairline-stroke);
+}
+.hero-art .hero-sweep {
+  fill: none;
+  stroke: none;
+}
+.hero-art .guard {
+  stroke: var(--hairline-edge);
+}
+.hero-art .hi {
+  stroke: var(--hairline-edge);
+  animation: hero-lit var(--cycle) var(--a) infinite;
+}
+.hero-art .hero-path {
+  stroke-width: 1.25;
+  opacity: 0.6;
+}
+.hero-art .hero-tile {
+  fill: var(--color-fd-background);
+  stroke: var(--color-fd-border);
+}
+.hero-art .hero-tile-glow {
+  fill: var(--color-fd-primary);
+  opacity: 0.3;
+  animation: hero-tile var(--cycle) 0.5s infinite;
+}
+.hero-art .hero-chip,
+.hero-art .hero-label {
+  font-family: var(--font-mono);
+  fill: var(--color-fd-muted-foreground);
+}
+.hero-art .hero-label {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.hero-art .hero-glow {
+  opacity: 0.45;
+  animation: hero-glow var(--cycle) var(--a) infinite;
+}
+.hero-art .hero-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hero-spin var(--cycle) var(--a) infinite;
+}
+/* Path lengths are out of 100 (pathLength), so the pulse skips the
+   non-scaling stroke, which would measure dashes in screen pixels. It is
+   parked clear of both ends, where a dash that only touches the end would
+   still draw its round cap. */
+.hero-art .hero-pulse {
+  vector-effect: none;
+  stroke: var(--c);
+  stroke-width: 2.5;
+  stroke-dasharray: 10 200;
+  stroke-dashoffset: 12;
+  animation: hero-run var(--cycle) var(--d) infinite;
+}
+@keyframes hero-run {
+  0% {
+    stroke-dashoffset: 12;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  }
+  10%,
+  100% {
+    stroke-dashoffset: -104;
+  }
+}
+@keyframes hero-tile {
+  0%,
+  24%,
+  100% {
+    opacity: 0.3;
+  }
+  6% {
+    opacity: 0.85;
+  }
+}
+@keyframes hero-lit {
+  0%,
+  40%,
+  100% {
+    stroke: var(--hairline-edge);
+  }
+  4%,
+  30% {
+    stroke: var(--c);
+  }
+}
+@keyframes hero-glow {
+  0%,
+  45%,
+  100% {
+    opacity: 0.45;
+  }
+  6%,
+  30% {
+    opacity: 1;
+  }
+}
+@keyframes hero-spin {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  }
+  38%,
+  100% {
+    transform: rotate(calc(var(--turn) * 1080deg));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-art * {
+    animation: none !important;
+  }
+  .hero-art .hero-pulse {
+    display: none;
+  }
+}
+
+/* The contributor swarm in the home page's open source band
+   (components/home/community.tsx). A dashed link joins each drone to its
+   neighbour nearer the middle, and a signal runs out along the links from the
+   maintainers, one step per link; each drone lights as the signal reaches it.
+   The keyframes are written by the component, since their timing depends on
+   how deep the formation is. */
+.home-swarm-link {
+  stroke: var(--color-fd-border);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  vector-effect: non-scaling-stroke;
+}
+.home-swarm-signal {
+  stroke: var(--color-fd-primary);
+  stroke-width: 1.5;
+  stroke-linecap: butt;
+  stroke-dasharray: 0.3 1.3;
+  stroke-dashoffset: 0.3;
+  animation: home-swarm-signal var(--cycle) linear var(--delay) infinite;
+}
+.home-swarm-node {
+  animation: home-swarm-light var(--cycle) ease-out var(--delay) infinite;
+}
+.home-swarm-node:hover {
+  animation-play-state: paused;
+  outline: 2px solid var(--color-fd-primary);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-swarm-signal,
+  .home-swarm-node {
+    animation: none;
+  }
+}

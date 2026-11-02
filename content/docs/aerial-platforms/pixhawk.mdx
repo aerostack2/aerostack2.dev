@@ -1,0 +1,127 @@
+---
+title: Pixhawk
+description: Fly drones with a PX4 autopilot, talking to PX4 directly over uXRCE-DDS.
+icon: CircuitBoard
+---
+
+The Pixhawk platform flies any drone running the [PX4](https://px4.io) autopilot, such as a Holybro
+PX4 Vision or an X500. It talks to PX4 through the
+[uXRCE-DDS bridge](https://docs.px4.io/main/en/middleware/uxrce_dds.html), which puts PX4's own
+topics on ROS 2 as `px4_msgs` messages, so no MAVLink or MAVROS is involved. It builds on ROS 2
+Humble and Jazzy.
+
+PX4 keeps flying the drone and Aerostack2 sends it setpoints in offboard mode. The platform reads
+PX4's estimate of the drone's state and passes it on as odometry.
+
+## Install
+
+The platform needs PX4's messages at the version of the firmware on the drone. The repository pins
+them to PX4 1.14 in its `dependencies.repos`, so import them along with the platform:
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_pixhawk.git
+vcs import < as2_platform_pixhawk/dependencies.repos
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install
+```
+
+If your drone runs a different PX4 release, check out the matching `release/` branch of `px4_msgs`
+instead. Messages that don't match the firmware won't reach the drone.
+
+You also need the [Micro XRCE-DDS Agent](https://github.com/eProsima/Micro-XRCE-DDS-Agent), the
+program on the companion computer that PX4 connects to. It builds in the same workspace:
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
+cd ~/aerostack2_ws
+colcon build --packages-select microxrcedds_agent
+```
+
+## Set up PX4
+
+1. Flash the PX4 firmware on the flight controller with [QGroundControl](https://qgroundcontrol.com).
+   For the PX4 Vision, the build target is `px4_fmu-v6c_default`.
+2. Set `XRCE_DDS_0_CFG` to the telemetry port the companion computer is wired to, for example TELEM 2.
+3. Set that port's baud rate, for example 921600.
+
+The PX4 [offboard mode](https://docs.px4.io/main/en/flight_modes/offboard.html) docs cover the
+failsafes PX4 applies when offboard setpoints stop.
+
+## Launch
+
+Start the agent on the serial port PX4 is wired to, then the platform:
+
+```bash
+MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600
+
+ros2 launch as2_platform_pixhawk pixhawk_launch.py namespace:=drone0
+```
+
+The namespace defaults to the `AEROSTACK2_SIMULATION_DRONE_ID` environment variable, so pass it
+when that isn't set. Every parameter in the platform configuration file is also a launch argument.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 100.0 | How often commands are sent to PX4, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `max_thrust` | 15.0 | The thrust in newtons that maps to full throttle |
+| `min_thrust` | 0.15 | The lowest thrust sent while flying |
+| `external_odom` | false | Send Aerostack2's state estimate to PX4 as visual odometry |
+| `fmu_prefix` | empty | A prefix for PX4's topics, for several vehicles on one network |
+| `target_system_id` | 1 | The PX4 system that receives arming and mode commands |
+
+Set `max_thrust` to your drone's real maximum thrust. Attitude and body rates commands are sent in
+newtons and scaled by it.
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Speed | Angle or rate |
+| Attitude | Angle |
+| Body rates | Rate |
+
+PX4 has no hover mode here, so the motion controller holds the drone in place itself. Position and
+trajectory commands aren't accepted. Speed fits the PID speed controller, and body rates fit the
+differential flatness controller.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | PX4's state estimate, converted to ENU in the `odom` frame |
+| `sensor_measurements/imu` | The IMU |
+| `sensor_measurements/gps` | GPS fixes |
+| `sensor_measurements/battery` | The battery state |
+| `platform/info` | The platform status |
+
+## With the rest of the stack
+
+PX4 already estimates the drone's state, so use the `raw_odometry` estimator plugin on its odometry.
+It reads `sensor_measurements/odom` by default:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+```
+
+When Aerostack2 knows more than PX4, for example from motion capture or a lidar odometry, set
+`external_odom` to true. The platform then sends the state estimate back to PX4 at 100 Hz as visual
+odometry, and PX4 fuses it once its estimator is configured for external vision.
+
+## Things to know
+
+- Taking off and landing are done by Aerostack2's behaviors, not by PX4's own take-off and land modes.
+- The platform can switch PX4 into offboard but never out of it. Leave offboard from the remote
+  control. After that, the platform treats the pilot as in control.
+- Arming and offboard are confirmed by PX4, so check `platform/info` rather than the service reply.
+- The kill switch sends PX4 a manual kill switch command. Make sure the remote control can also kill
+  the motors, since that's the one that always works.
+
+The [project_px4_vision](https://github.com/aerostack2/project_px4_vision) repository has a complete
+setup for the PX4 Vision, both in PX4's simulator and on the real drone.

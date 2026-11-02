@@ -1,0 +1,112 @@
+---
+title: Perception
+description: The ArUco detector plugin of the object perception behavior, and how to set up its pipeline.
+icon: ScanEye
+---
+
+The object perception behavior runs a pipeline of detector plugins on the drone's camera and reports
+what they find. ArUco is the only plugin today.
+
+| Plugin | Detects |
+| --- | --- |
+| `aruco` | ArUco markers, with their pose |
+
+The behavior serves the `ObjectPerceptionBehavior` action, of type `as2_msgs/action/DetectObjects`.
+Detection starts when a goal arrives and keeps going until the behavior is stopped:
+
+```bash
+ros2 action send_goal /drone0/ObjectPerceptionBehavior as2_msgs/action/DetectObjects \
+  "{threshold: 0.0, target_classes: []}"
+```
+
+Each stage publishes its detections on its output topic, and the action's feedback carries the last
+stage's detections. There's no Python API module for perception yet.
+
+## Running it
+
+```bash
+ros2 launch as2_behaviors_object_perception detect_behavior_launch.py \
+  namespace:=drone0 \
+  config_file:=config/perception.yaml
+```
+
+`detect_behavior_auto_launch.py` does the same and sends the goal by itself 5 seconds after start,
+with the `threshold` and `target_classes` launch arguments.
+
+The package's own configuration is always loaded, and your file is merged over it. It sets up one
+stage, called `detector`, that runs the ArUco plugin on the camera:
+
+```yaml title="config/perception.yaml"
+/**:
+  ros__parameters:
+    camera_image_topic: "sensor_measurements/camera/image_raw"
+    camera_info_topic: "sensor_measurements/camera/camera_info"
+    pipeline:
+      stages: ["detector"]
+      detector:
+        plugin: "aruco"
+        input_source: "image"
+        publish_output: true
+        output_topic: "detections_data"
+```
+
+The default topics match a Gazebo camera named `camera` in the
+[world file](/docs/aerial-platforms/gazebo-simulation#the-world-file). A camera topic that ends in
+`/compressed` is read as a compressed image. Every topic is resolved in the drone's namespace, even
+one that starts with a slash.
+
+## Behavior parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `camera_image_topic` | `sensor_measurements/camera/image_raw` | The camera's image topic |
+| `camera_info_topic` | `sensor_measurements/camera/camera_info` | The camera's calibration. Without it, poses can't be computed |
+| `use_embedded_camera` | false | Open a USB camera inside the node, set up by the `camera_interface_file` and `calibration_file` launch arguments |
+| `enable_rectification` | false | Undistort images before detecting. Fisheye cameras are supported |
+| `rectified_camera_info_topic` | empty | Where to publish the calibration of the undistorted image, when rectifying |
+| `persistent` | true | Keep the pipeline running after each image |
+| `run_frequency` | 30.0 | How often the pipeline runs, in Hz |
+| `pipeline.stages` | `["detector"]` | The names of the stages, in order |
+
+Each stage takes its own settings, under its name:
+
+| Parameter | Default for `detector` | What it does |
+| --- | --- | --- |
+| `pipeline.<stage>.plugin` | `aruco` | The plugin the stage runs |
+| `pipeline.<stage>.input_source` | `image` | `image` for the camera, `internal` for another stage, or `external` for a topic |
+| `pipeline.<stage>.input_stage` | | The stage an `internal` stage reads. Empty means the previous one |
+| `pipeline.<stage>.input_topic` | | The topic an `external` stage reads |
+| `pipeline.<stage>.publish_output` | true | Publish the stage's detections |
+| `pipeline.<stage>.output_topic` | `detections_data` | Where they're published, as `as2_msgs/msg/ObjectPerceptionArray` |
+| `pipeline.<stage>.enable_debug` | true | Publish the detected poses and markers for RViz |
+| `pipeline.<stage>.debug_poses_topic` | `debug/detection_poses` | Where the poses are published, as a pose array |
+
+These defaults only apply to a stage called `detector`. A stage with another name starts with
+`internal` input, no output and no debug, so set every field for it.
+
+## ArUco
+
+`aruco` finds ArUco markers with OpenCV and reports one detection per marker. Its class is the
+marker's ID, and it comes with a bounding box and its four corners as keypoints. With
+`estimate_pose` on and the camera's calibration available, it also gives the marker's pose in the
+camera's frame. It doesn't publish transforms.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `aruco.tag_dict` | `6x6_250` | The marker dictionary, from `4x4_50` to `7x7_1000` |
+| `aruco.marker_size` | 0.15 | The side of a marker, in meters. Poses scale with it |
+| `aruco.estimate_pose` | true | Compute each marker's pose |
+| `aruco.corner_refinement` | `none` | Refine the corners with `subpix`, `contour` or `apriltag` |
+| `aruco.adaptive_thresh_win_size_min` | 7 | The smallest window of the adaptive threshold, in pixels |
+| `aruco.adaptive_thresh_win_size_max` | 7 | The largest window |
+| `aruco.adaptive_thresh_win_size_step` | 10 | The step between windows |
+
+The settings are shared by every stage that runs the plugin. With a fisheye camera, turn on
+`enable_rectification`, or the poses come out wrong.
+
+The goal's `target_classes` limits the detections to some marker IDs, given as strings such as
+`"3"`. An empty list reports every marker. The goal's `threshold` must be between 0 and 1. Every
+marker is reported with full confidence, so it doesn't filter anything yet.
+
+With `enable_debug` on, the plugin also publishes `debug/detection_markers` for RViz, a cube and the
+ID of each marker with a pose.

@@ -1,0 +1,47 @@
+---
+title: Projects
+description: List and download the Aerostack2 example projects with as2 project.
+icon: FolderDown
+---
+
+An example project is a repository with the launch files, configuration and mission scripts for one
+setup, such as a simulation or a real drone. `as2 project` downloads them into `projects/` inside
+the Aerostack2 folder.
+
+```bash
+as2 project -l
+as2 project -n gazebo
+as2 cd gazebo
+```
+
+| Flag | What it does |
+| --- | --- |
+| `-l` | Lists the projects that can be downloaded, with their number and branch |
+| `-n <names>` | Downloads projects by name. Several names are separated by commas |
+| `-i <numbers>` | Downloads projects by their number in the list. Several are separated by commas |
+| `-v` | Adds each project's repository to the list. Put it before `-l` |
+| `-h` | Prints the help |
+
+Each project is cloned with git, on the branch given in the list. A project that's already in
+`projects/` is skipped, so update it with `git pull` inside its folder.
+
+## The list
+
+The list comes from the `projects.repos` file on Aerostack2's main branch, read from GitHub each
+time the command runs:
+
+| Number | Project | Repository |
+| --- | --- | --- |
+| 1 | `gazebo` | [project_gazebo](https://github.com/aerostack2/project_gazebo) |
+| 2 | `crazyflie` | [project_crazyflie](https://github.com/aerostack2/project_crazyflie) |
+| 3 | `px4_vision` | [project_px4_vision](https://github.com/aerostack2/project_px4_vision) |
+| 4 | `dji_osdk` | [project_dji_osdk](https://github.com/aerostack2/project_dji_osdk) |
+
+Other projects, like the
+[multirotor simulator](https://github.com/aerostack2/project_as2_multirotor_simulator) one, are
+cloned with git. Clone them into `projects/` too, and `as2 cd` reaches them by name.
+
+<Callout type="warn" title="Needs internet and ping">
+  Before anything else, the command checks the connection by pinging `google.com`. On a network that
+  blocks ping, it reports that the internet connection isn't working, even when GitHub is reachable.
+</Callout>

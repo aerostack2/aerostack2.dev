@@ -1,0 +1,170 @@
+---
+title: Architecture
+description: The layers of Aerostack2, how a drone's software is organized, and how components are swapped.
+icon: Layers
+---
+
+Aerostack2 organizes the software of an aerial robot in layers, and each layer builds on the ones
+below it. A mission calls behaviors, behaviors rely on estimation and control, and those talk to the
+drone through its platform. A set of common interfaces runs through all of them.
+
+<LayerDiagram
+  layers={[
+    {
+      title: "Applications",
+      description: "What you build",
+      items: [{ label: "Example projects", href: "/docs/examples" }, { label: "Your application" }],
+    },
+    {
+      title: "Mission control",
+      description: "How missions are written and monitored",
+      items: [
+        { label: "Python API", href: "/docs/api" },
+        { label: "Behavior trees", href: "/docs/concepts/missions#behavior-trees" },
+        { label: "Mission interpreter", href: "/docs/concepts/missions#mission-interpreter" },
+        { label: "Keyboard teleoperation", href: "/docs/user-interfaces/keyboard-teleoperation" },
+        { label: "Alphanumeric viewer", href: "/docs/user-interfaces/alphanumeric-viewer" },
+        { label: "RViz visualization" },
+      ],
+    },
+    {
+      title: "Behaviors",
+      description: "Skills the drone can perform",
+      items: [
+        { label: "Take off and land" },
+        { label: "Go to" },
+        { label: "Follow path" },
+        { label: "Follow reference", href: "/docs/behaviors/follow-reference" },
+        { label: "Trajectory generation", href: "/docs/behaviors/trajectory-generation" },
+        { label: "Path planning" },
+        { label: "Perception", href: "/docs/behaviors/perception" },
+        { label: "Payload", href: "/docs/behaviors/payload" },
+        { label: "Swarm flocking", href: "/docs/behaviors/swarm-flocking" },
+        { label: "Parameter estimation", href: "/docs/behaviors/param-estimation" },
+      ],
+    },
+    {
+      title: "Robotics functions",
+      description: "Estimation, control and mapping",
+      items: [
+        { label: "State estimator", href: "/docs/concepts/state-estimator" },
+        { label: "Motion controller", href: "/docs/concepts/motion-controller" },
+        { label: "Map server" },
+        { label: "Geozones" },
+      ],
+    },
+    {
+      title: "Platforms and sensors",
+      description: "The link to the simulator or the real drone",
+      items: [
+        { label: "Gazebo", href: "/docs/aerial-platforms/gazebo-simulation" },
+        { label: "Multirotor simulator", href: "/docs/aerial-platforms/multirotor-simulator" },
+        { label: "Pixhawk (PX4)", href: "/docs/aerial-platforms/pixhawk" },
+        { label: "Crazyflie", href: "/docs/aerial-platforms/crazyflie" },
+        { label: "Tello", href: "/docs/aerial-platforms/ryze-tello" },
+        { label: "DJI", href: "/docs/aerial-platforms/dji-osdk" },
+        { label: "MAVLink", href: "/docs/aerial-platforms/mavlink" },
+        { label: "Betaflight", href: "/docs/aerial-platforms/betaflight" },
+        { label: "RealSense" },
+        { label: "USB camera" },
+      ],
+    },
+  ]}
+  rail={{
+    title: "Common interfaces",
+    description: "Messages, topic names and frames shared by every layer",
+    items: [
+      { label: "Communication channels", href: "/docs/concepts/as2-communications" },
+      { label: "as2_msgs", href: "/docs/ros2-interfaces/as2-msgs" },
+      { label: "TF frames", href: "/docs/concepts/frames" },
+      { label: "as2_core" },
+    ],
+  }}
+  caption="Aerostack2 layers. Select an item to read more about it."
+/>
+
+## The layers
+
+### Common interfaces
+
+The message types in `as2_msgs`, the standard topic names in `as2_core` and a shared set of TF frames
+let every component talk to every other one without knowing who's on the other side. A controller doesn't know whether its
+commands go to Gazebo or to a PX4 autopilot; it publishes on `actuator_command/*` and the platform
+takes them from there. [Communication channels](/docs/concepts/as2-communications) lists them.
+
+### Platforms and sensors
+
+An [aerial platform](/docs/concepts/aerial-platform) connects Aerostack2 to one kind of drone. It
+turns Aerostack2 commands into what the autopilot or simulator understands, and publishes the drone's
+state and sensor data back. Sensor drivers, such as the RealSense and USB camera interfaces, do the
+same for sensors that aren't part of the platform.
+
+Changing from simulation to a real drone means changing the platform. Everything above it stays the
+same.
+
+### Robotics functions
+
+The essential functions of an autonomous drone:
+
+- The [state estimator](/docs/concepts/state-estimator) works out where the drone is.
+- The [motion controller](/docs/concepts/motion-controller) turns where the drone should go into
+  commands for the platform.
+- The map server builds occupancy maps, and geozones restrict where the drone may fly.
+
+### Behaviors
+
+A [behavior](/docs/concepts/behaviors) is a skill with a uniform interface, such as taking off,
+going to a point, following a path or pointing a gimbal. You start it with a goal, follow its progress, and can pause, resume,
+change or stop it. Behaviors hide how a task is done, so a mission asks for "land" the same way
+whether landing means descending slowly or centering on a visual marker.
+
+### Mission control
+
+A [mission](/docs/concepts/missions) decides which behaviors run and when. You can write it as a
+Python script with the [Python API](/docs/api), as a behavior tree, or as a JSON mission for the
+mission interpreter. You
+can also fly by hand with keyboard teleoperation. User interfaces such as the alphanumeric viewer
+and RViz show what the drone is doing.
+
+### Applications
+
+At the top are the applications built from all of the above. The [example projects](/docs/examples)
+are complete applications for simulators and real drones, and a good starting point for your own.
+
+## One drone, one namespace
+
+Each drone runs its own copy of the stack under a ROS 2 namespace, such as `drone0`. Every topic,
+service and action lives under that namespace, so the motion references of `drone0` are published
+on `/drone0/motion_reference/pose`.
+
+To fly several drones, start one stack per drone with a different namespace. Missions, behavior trees
+and user interfaces pick a drone by its namespace, which is why the Python API takes a `drone_id`:
+
+```python
+drone = DroneInterface(drone_id="drone0")
+```
+
+Tools that watch several drones, like RViz and the alphanumeric viewer, usually run apart from the
+drones, on a ground station.
+
+## Swap components with plugins
+
+Most components are a fixed ROS 2 node that loads its algorithm as a plugin. The node handles the
+standard interface; the plugin does the work. You choose the plugin in the configuration, without
+recompiling anything.
+
+For example, the [Quickstart](/docs/getting-started/quickstart) project picks a ground-truth state
+estimator and a position-based take-off:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "ground_truth"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_position"
+```
+
+The motion controller works the same way and is chosen at launch, for example with
+`plugin_name:=pid_speed_controller`. The [plugins](/docs/plugins) page lists what's available.

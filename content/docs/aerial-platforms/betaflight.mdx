@@ -1,0 +1,125 @@
+---
+title: Betaflight
+description: Fly racing-style drones with a Betaflight flight controller, sending RC commands over MSP.
+icon: Zap
+---
+
+<Callout type="warn" title="Deprecated">
+  The Betaflight platform is no longer maintained. It isn't built in Aerostack2's CI, it was only
+  tested on ROS 2 Humble, and it may be removed in a future release. It's documented here for
+  existing setups.
+</Callout>
+
+The Betaflight platform flies drones whose flight controller runs
+[Betaflight](https://betaflight.com), the firmware used on racing and freestyle drones. A companion
+computer, such as a Jetson, is wired to one of the flight controller's UARTs and sends it RC channel
+values over the MSP protocol, as if it were the pilot's radio. It was tested with Betaflight 4.4 and 4.5.
+
+Betaflight only stabilizes rates, so the platform accepts body rates and thrust and nothing else. It
+reports the IMU and the battery but no position, which has to come from another source.
+
+## Install
+
+The platform needs the [msp](https://github.com/CVAR-A2RL/msp) library. Clone both into your
+workspace:
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_betaflight.git
+git clone https://github.com/CVAR-A2RL/msp.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install
+```
+
+## Set up Betaflight
+
+Connect the flight controller over USB and open the
+[Betaflight configurator](https://app.betaflight.com). Save after each screen.
+
+<Steps>
+<Step>
+
+### Ports
+
+Enable Configuration/MSP on the UART the companion computer is wired to, and Serial Rx on the UART
+of your radio receiver.
+
+</Step>
+<Step>
+
+### Rates
+
+On PID Tuning, under Rateprofile Settings, set the RC Rate of roll, pitch and yaw to 1.80 and every
+other field to 0. That gives straight lines from −360 to 360 deg/s, which is what the platform's
+default rate limits expect.
+
+</Step>
+<Step>
+
+### Modes
+
+Assign ARM to AUX 1, and ANGLE to a switch for flying with the radio. Then let MSP override the
+first four channels, the sticks, from the CLI:
+
+```text
+set msp_override_channels_mask=15
+save
+```
+
+A new MSP OVERRIDE mode appears on the Modes screen. Put it on the same switch as ANGLE, on the
+opposite position. With the switch on MSP OVERRIDE the companion computer flies the sticks, and
+flipping it back gives control to the pilot.
+
+</Step>
+<Step>
+
+### Failsafe
+
+Set the failsafe switch action to Kill, and assign the FAILSAFE mode to a switch, so the pilot can
+always stop the motors.
+
+</Step>
+</Steps>
+
+Board alignment, the receiver protocol and the motor mixer depend on your drone. Check them on the
+Configuration, Receiver and Motors screens.
+
+## Launch
+
+```bash
+ros2 launch as2_platform_betaflight as2_platform_betaflight_launch.py namespace:=drone0
+```
+
+The platform configuration file sets the serial link, the rates of each MSP stream and the command
+limits. These are the values you'll most likely change:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `device` | `/dev/ttyTHS1` | The serial port wired to the flight controller |
+| `baudrate` | 115200 | The serial baud rate |
+| `imu.frequency` | 0 | How often the IMU is read, in Hz. 0 turns it off |
+| `battery_hz` | 0 | How often the battery is read, in Hz. 0 turns it off |
+| `thrust.max` | 44.0 | The thrust in newtons that maps to full throttle |
+| `limit_thrust_percent` | 0.6 | The highest throttle the platform sends, as a fraction |
+| `use_thrust_map` | false | Map thrust to throttle with a polynomial instead of linearly |
+
+With the defaults, no sensor is read. Set `imu.frequency` and `battery_hz` above 0 to publish
+`sensor_measurements/imu` and `sensor_measurements/battery`. For high IMU rates, raise
+`serial_update_rate_hz` in the Betaflight CLI too.
+
+## With the rest of the stack
+
+The platform only accepts body rates with a yaw rate, so use a controller that produces them, like
+the differential flatness or the geometric controller. The PID speed controller can't drive it.
+
+The drone's position has to come from outside, for example from motion capture through the
+`ground_truth` estimator or from another odometry source through `raw_odometry`.
+
+## Things to know
+
+- The platform streams RC values all the time, whatever the platform state.
+- Switching to offboard does nothing on the drone. The pilot hands over control with the MSP
+  OVERRIDE switch.
+- The kill switch sets every channel low and the kill channel high, and keeps sending that until
+  the node is restarted.

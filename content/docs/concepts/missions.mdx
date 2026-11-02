@@ -1,0 +1,161 @@
+---
+title: Missions
+description: The three ways to write an Aerostack2 mission, with the same flight written in each.
+icon: Route
+---
+
+A mission decides which [behaviors](/docs/concepts/behaviors) run and in what order. Aerostack2
+offers three ways to write one, and all of them call the same behaviors underneath.
+
+| Way | Written as | Good for |
+| --- | --- | --- |
+| Python API | A Python script | Most missions, anything with logic, loops or several drones |
+| Behavior tree | An XML file | Reactive missions that wait for events, and editing missions visually |
+| Mission interpreter | A JSON plan | Missions sent at run time, for example from a ground station |
+
+## The same mission three ways
+
+A drone takes off to 1 m, flies two sides of a square and lands.
+
+<Tabs items={["Python API", "Behavior tree", "Mission interpreter"]}>
+<Tab value="Python API">
+
+```python title="mission.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0", use_sim_time=True)
+
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.0, speed=0.5)
+drone.go_to(3.0, 0.0, 1.0, speed=1.0)
+drone.go_to(3.0, 3.0, 1.0, speed=1.0)
+drone.land(speed=0.5)
+
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```bash
+python3 mission.py
+```
+
+</Tab>
+<Tab value="Behavior tree">
+
+```xml title="trees/square.xml"
+<?xml version="1.0"?>
+<root BTCPP_format="4">
+  <BehaviorTree ID="BehaviorTree">
+    <Sequence>
+      <Action ID="Arm" service_name="set_arming_state"/>
+      <Action ID="Offboard" service_name="set_offboard_mode"/>
+      <Action ID="TakeOff" height="1.0" speed="0.5"/>
+      <Action ID="GoTo" max_speed="1.0" pose="3;0;1" yaw_angle="0.0" yaw_mode="0"/>
+      <Action ID="GoTo" max_speed="1.0" pose="3;3;1" yaw_angle="0.0" yaw_mode="0"/>
+      <Action ID="Land" speed="0.5"/>
+    </Sequence>
+  </BehaviorTree>
+</root>
+```
+
+```bash
+ros2 launch as2_behavior_tree behavior_trees.launch.py \
+  drone_id:=drone0 \
+  tree:=trees/square.xml
+```
+
+</Tab>
+<Tab value="Mission interpreter">
+
+```python title="mission_interpreter.py"
+import rclpy
+from as2_python_api.mission_interpreter.mission import Mission
+from as2_python_api.mission_interpreter.mission_interpreter import MissionInterpreter
+
+plan = """
+{
+  "target": "drone0",
+  "plan": [
+    {"behavior": "takeoff", "args": {"height": 1.0, "speed": 0.5}},
+    {"behavior": "go_to", "args": {"x": 3.0, "y": 0.0, "z": 1.0, "speed": 1.0}},
+    {"behavior": "go_to", "args": {"x": 3.0, "y": 3.0, "z": 1.0, "speed": 1.0}},
+    {"behavior": "land", "args": {"speed": 0.5}}
+  ]
+}
+"""
+
+rclpy.init()
+interpreter = MissionInterpreter(use_sim_time=True)
+interpreter.load_mission(0, Mission.parse_raw(plan))
+interpreter.drone.arm()
+interpreter.drone.offboard()
+interpreter.start_mission(0, 0)
+interpreter.exec_thread.join()
+interpreter.shutdown()
+rclpy.shutdown()
+```
+
+</Tab>
+</Tabs>
+
+The [Quickstart](/docs/getting-started/quickstart) project has all three, ready to run against the
+simulator.
+
+## Python API
+
+`DroneInterface` connects to one drone by its namespace and gives it a method for each behavior, plus
+`arm`, `offboard`, `manual` and the drone's state:
+
+```python
+print(drone.position, drone.orientation, drone.speed)
+```
+
+Each behavior call waits until the behavior ends, unless you pass `wait=False`. Then the mission
+can do other work and pause, resume, modify or stop the behavior, as shown under
+[Behaviors in a mission](/docs/concepts/behaviors#behaviors-in-a-mission).
+
+Take off, land, go to and follow path are loaded with the interface. Other behaviors are loaded as
+modules by name, and your own modules are found through the `AS2_MODULES_PATH` environment variable:
+
+```python
+drone.load_module("follow_reference")
+drone.follow_reference(...)
+```
+
+A script can create one `DroneInterface` per drone to fly several drones together. The
+[Python API](/docs/api) reference lists every module and method.
+
+## Behavior trees
+
+`as2_behavior_tree` runs a tree written for [BehaviorTree.CPP](https://www.behaviortree.dev) 4. Each
+behavior is an action node, and the tree decides what runs next from what succeeds or fails. You can
+draw and edit trees in [Groot](https://www.behaviortree.dev/groot), and set `groot_logger:=true` at
+launch to watch the tree run.
+
+| Node | Kind | What it does |
+| --- | --- | --- |
+| `Arm`, `Disarm`, `Offboard` | Action | Arm, disarm and switch to offboard. |
+| `TakeOff`, `Land`, `GoTo`, `FollowPath` | Action | Run the motion behaviors. |
+| `GoToGps`, `SetOrigin`, `GetOrigin`, `GpsToCartesian` | Action | Fly to GPS coordinates and manage the GPS origin. |
+| `SendEvent`, `Echo` | Action | Publish an event, or print a value for debugging. |
+| `IsFlying` | Condition | Succeeds while the drone is flying. |
+| `WaitForEvent` | Decorator | Waits for a message on a topic before running its child. |
+| `WaitForAlert` | Decorator | Waits for an alert on a topic, usually `alert_event`, before running its child. |
+
+A tree starts as soon as it's launched. To hold it until you're ready, wrap the start in a
+`WaitForEvent` on a topic like `start`, and publish an empty string there when it's time to fly.
+`WaitForAlert` is also how a tree reacts to the [alerts](/docs/concepts/as2-communications#alerts)
+the platform doesn't act on yet, like landing on an emergency land request.
+
+## Mission interpreter
+
+The mission interpreter runs a plan written in JSON. Each item names a behavior by its Python API
+module, like `takeoff` or `go_to`, and gives its arguments. The interpreter can pause, resume and
+stop the plan, jump to an item, and take a new or modified plan while it runs.
+
+It also runs on its own with `ros2 run as2_python_api mission_executor`. It then takes plans on the
+`mission_update` topic and reports progress on `mission_status`. That's how a ground station sends missions to a drone
+while it flies.

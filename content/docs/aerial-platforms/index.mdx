@@ -1,0 +1,60 @@
+---
+title: Overview
+description: The simulators and drones Aerostack2 can fly, and how to pick and run a platform.
+icon: Compass
+---
+
+An aerial platform connects Aerostack2 to one kind of drone or simulator. Everything above it stays
+the same, so a mission tested in simulation flies a real drone once you change the platform. How
+platforms work, their state machine and their control modes are explained on the
+[aerial platform](/docs/concepts/aerial-platform) concept page.
+
+## Available platforms
+
+| Platform | Package | Flies | ROS 2 |
+| --- | --- | --- | --- |
+| [Multirotor simulator](/docs/aerial-platforms/multirotor-simulator) | `as2_platform_multirotor_simulator` | A lightweight simulated multirotor | Humble, Jazzy |
+| [Gazebo](/docs/aerial-platforms/gazebo-simulation) | `as2_platform_gazebo` | Simulated drones in 3D worlds with sensors | Humble, Jazzy |
+| [Pixhawk](/docs/aerial-platforms/pixhawk) | `as2_platform_pixhawk` | Drones with a PX4 autopilot, over uXRCE-DDS | Humble, Jazzy |
+| [MAVLink](/docs/aerial-platforms/mavlink) | `as2_platform_mavlink` | PX4 autopilots over MAVLink, through MAVROS | Humble, Jazzy |
+| [Crazyflie](/docs/aerial-platforms/crazyflie) | `as2_platform_crazyflie` | Bitcraze Crazyflie nano quadcopters | Humble |
+| [DJI OSDK](/docs/aerial-platforms/dji-osdk) | `as2_platform_dji_osdk` | DJI Matrice 210 V2 and M300 through the Onboard SDK | Humble |
+| [DJI PSDK](/docs/aerial-platforms/dji-psdk) | `as2_platform_dji_psdk` | DJI Matrice 300, 350 and M30 through the Payload SDK | Humble |
+| [Ryze Tello](/docs/aerial-platforms/ryze-tello) | `as2_platform_tello` | The Ryze Tello over Wi-Fi | Humble, Jazzy |
+| [Betaflight](/docs/aerial-platforms/betaflight) | `as2_platform_betaflight` | Flight controllers running Betaflight, over MSP. Deprecated | Humble |
+
+The two simulators ship with Aerostack2. The others live in their own repositories under the
+[aerostack2](https://github.com/aerostack2) organization and are built from source in your
+workspace, next to Aerostack2.
+
+Crazyflie and both DJI platforms aren't supported on Jazzy yet. The Betaflight platform is
+deprecated and no longer maintained.
+
+## Which simulator
+
+Start with the **multirotor simulator**. It needs no 3D engine, starts in a second and runs
+anywhere, including macOS. Move to **Gazebo** when a mission needs sensors that see the world, like
+cameras and lidars, or a 3D world to fly in.
+
+## Running a platform
+
+Each drone runs its own platform node, named `platform`, in the drone's namespace. Every platform
+has a launch file that takes the namespace and its configuration files, for example:
+
+```bash
+ros2 launch as2_platform_multirotor_simulator as2_platform_multirotor_simulator.launch.py \
+  namespace:=drone0
+```
+
+The rest of the stack runs next to it, and two choices depend on the platform:
+
+- The [state estimator](/docs/concepts/state-estimator) plugin. Simulators provide ground truth, while
+  real drones usually provide their own odometry.
+- The [motion controller](/docs/concepts/motion-controller) plugin, which has to produce a control
+  mode the platform accepts.
+
+## Your own drone
+
+If your drone isn't listed, a platform for it is a single node with a handful of methods. See
+[writing a platform](/docs/concepts/aerial-platform#writing-a-platform) and the
+[platform tutorial](/docs/tutorials/aerial-platform).

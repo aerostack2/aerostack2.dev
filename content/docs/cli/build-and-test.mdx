@@ -1,0 +1,59 @@
+---
+title: Build and test
+description: Build, test and clean the packages of a source workspace with as2 build, as2 test and as2 clean.
+icon: Hammer
+---
+
+These commands run colcon in the workspace, so they work from any directory. They need a ROS 2
+distro loaded, and stop with `ROS_DISTRO is not set` otherwise.
+
+## Build
+
+`as2 build` builds the whole workspace. Given package names, it builds those packages and every
+package they depend on:
+
+```bash
+as2 build
+as2 build as2_motion_controller
+```
+
+| Flag | What it does |
+| --- | --- |
+| `-d`, `--debug` | Builds in debug mode instead of release |
+| `-v`, `--verbose` | Shows the compiler's output as it runs |
+
+The build always uses `--symlink-install`, so changes to existing Python, launch and configuration
+files take effect without rebuilding. New files still need a build. After a build, open a new
+terminal or source `setup_env.bash` again to pick up new packages.
+
+Building a single package sources the workspace's `install/setup.bash` first, and stops if it
+doesn't exist yet. Run a full `as2 build` once in a fresh workspace.
+
+## Test
+
+`as2 test` runs the tests of the whole workspace and prints a summary of the results. Given a
+package, it only runs that package's tests:
+
+```bash
+as2 test
+as2 test as2_core
+```
+
+With `-v`, colcon's full output is shown as the tests run, and the summary is left out. The package
+has to be built before its tests can run.
+
+## Clean
+
+`as2 clean` removes build output. It asks for confirmation first, and only goes ahead on `y`:
+
+```bash
+as2 clean as2_core as2_msgs
+as2 clean -a
+```
+
+Given package names, it removes each package's folders in `build` and `install`, plus the
+workspace's whole `log` folder. A name that isn't a package in the workspace stops the command,
+leaving the packages after it as they were.
+
+`-a` removes the workspace's `build`, `install` and `log` folders. Rebuild with `as2 build`
+afterwards.

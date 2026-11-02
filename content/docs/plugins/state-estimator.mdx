@@ -1,0 +1,172 @@
+---
+title: State estimator
+description: The ground truth, raw odometry and EKF plugins, and the settings they take.
+icon: LocateFixed
+---
+
+The state estimator tells the rest of the stack where the drone is, and its plugin decides where
+that comes from. What each plugin is for and how the TF tree fits together is on the
+[state estimator](/docs/concepts/state-estimator) concept page.
+
+| Plugin | Reads | Where the pose goes |
+| --- | --- | --- |
+| `ground_truth` | An exact pose, or a motion capture rigid body | `odom → base_link`, with `map → odom` fixed |
+| `raw_odometry` | Any `nav_msgs/msg/Odometry`, and optionally GPS | `odom → base_link`, with `map → odom` fixed |
+| `simple_ekf` | The IMU, plus any number of pose and velocity sources | Drifting sources in `odom → base_link`, absolute ones in `map → odom` |
+
+The node publishes `self_localization/pose` in `earth` and `self_localization/twist` in
+`base_link`. Both start once the plugin has reported every transform it owns and a velocity.
+
+## Running it
+
+Pass the plugin's settings as `plugin_config_file`. Your file is merged over the plugin's defaults,
+so it only needs what you change:
+
+```yaml title="config/state_estimator.yaml"
+/**:
+  ros__parameters:
+    raw_odometry:
+      odom_sub_topic: "/lio/odometry"
+```
+
+```bash
+ros2 launch as2_state_estimator state_estimator_launch.py \
+  namespace:=drone0 \
+  plugin_name:=raw_odometry \
+  plugin_config_file:=config/state_estimator.yaml
+```
+
+Add `use_sim_time:=true` in simulation.
+
+<Callout type="warn" title="Use plugin_config_file for plugin settings">
+  The launch file loads the plugin's defaults after `config_file`, so a plugin setting placed in
+  `config_file` is replaced by its default. Check what was applied with
+  `ros2 param get /drone0/state_estimator raw_odometry.odom_sub_topic`, or in the startup log, which
+  lists every setting the plugin read.
+</Callout>
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `plugin_name` | | The plugin to load. Required |
+| `publish_hz` | 0.0 | How often the state is published, in Hz. 0 publishes on every update |
+| `<plugin>.debug_publish_hz` | -1.0 | How often the plugin's own estimate is published under `state_estimation/<plugin>/`. -1 publishes on every update, and 0 turns it off |
+
+The frame names are the ones every Aerostack2 node shares, described under
+[frame names](/docs/concepts/frames#frame-names).
+
+## Ground truth
+
+`ground_truth` takes an exact pose in the `earth` frame, from a topic or from one rigid body of a
+[mocap4r2](https://github.com/MOCAP4ROS2-Project) motion capture system. Poses on the topic have to
+be stamped in `earth`, and poses in any other frame are dropped. Motion capture poses are always
+taken as `earth`.
+
+Each setting goes under `ground_truth`, such as `ground_truth.twist_sub_topic`:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `pose_sub_topic` | `ground_truth/pose` | The pose topic, as `geometry_msgs/msg/PoseStamped` |
+| `mocap_sub_topic` | empty | A `mocap4r2_msgs/msg/RigidBodies` topic. When set, it's used instead of the pose topic |
+| `rigid_body_name` | `33` | The rigid body to track, when reading motion capture |
+| `twist_sub_topic` | empty | A `geometry_msgs/msg/TwistStamped` topic in `base_link`. Empty differentiates the pose instead |
+| `twist_smooth_filter_cte` | 1.0 | Smooths the differentiated velocity, above 0 and up to 1. 1 means no smoothing |
+| `reject_repeated_positions` | false | Drop poses that repeat the last position |
+| `earth_map_transform.set_earth_map` | false | Place `map` with the pose below. When false, `map` sits where the first pose is |
+| `earth_map_transform.position.x`, `.y`, `.z` | 0.0 | Where `map` sits in `earth`, in meters |
+| `earth_map_transform.orientation.roll`, `.pitch`, `.yaw` | 0.0 | How `map` is turned in `earth`, in radians |
+
+Set `twist_sub_topic` only to a topic that's published. The pose is only published together with a
+velocity, so a silent velocity topic means no pose.
+
+## Raw odometry
+
+`raw_odometry` takes an odometry as it is. Its pose becomes `odom → base_link`, and `map → odom`
+stays at zero. With GPS, it also places the drone on the globe and offers the `set_origin` and
+`get_origin` services.
+
+Each setting goes under `raw_odometry`, such as `raw_odometry.use_gps`:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `odom_sub_topic` | `sensor_measurements/odom` | The odometry topic, as `nav_msgs/msg/Odometry` |
+| `earth_map_transform.set_earth_map` | false | Place `map` with the pose below. When false, `map` sits at the origin of `earth`, or at the first GPS fix when `use_gps` is on |
+| `earth_map_transform.position.x`, `.y`, `.z` | 0.0 | Where `map` sits in `earth`, in meters |
+| `earth_map_transform.orientation.roll`, `.pitch`, `.yaw` | 0.0 | How `map` is turned in `earth`, in radians |
+| `use_gps` | false | Use GPS to set the origin, from `sensor_measurements/gps` |
+| `gps_origin.set_origin` | `first_gps` | Where the origin comes from. `first_gps`, `manual` or `service` |
+| `gps_origin.coordinates.latitude`, `.longitude`, `.altitude` | 0.0 | The origin, in `manual` mode |
+
+With GPS on, the pose starts once the first fix arrives, and in `service` mode once `set_origin`
+has been called too. The origin can only be set once.
+
+## Simple EKF
+
+`simple_ekf` is a 15-state extended Kalman filter, with position, velocity, attitude and the IMU
+biases. It predicts with every IMU message and corrects with each source listed in `update_topics`.
+
+The filter starts once `map` is placed. That happens with the first pose of a source whose
+`set_earth_map` is true, or with the first IMU message when no source has it. The pose that places
+`map` must be stamped exactly `earth` or `map`, or the filter never starts.
+
+Each setting goes under `simple_ekf`, such as `simple_ekf.timer_hz`:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `predict_topic` | `sensor_measurements/imu` | The IMU topic, assumed to be in `base_link` |
+| `update_topics` | `["posestamped1"]` | The names of the correction sources, each with its own block |
+| `platform_topic` | `platform/info` | Where to read whether the drone is flying. Empty counts it as always flying |
+| `use_arm` | false | Count the drone as flying once armed, instead of once in offboard |
+| `gravity` | 9.81 | Gravity, in m/s² |
+| `timer_hz` | 100.0 | How often the filter smooths `map → odom` and runs its checks, in Hz |
+| `map_odom_alpha` | 0.1 | How quickly `map → odom` follows corrections, above 0 and up to 1. 1 turns the smoothing off |
+| `max_update_latency_ms` | 1000.0 | The oldest correction the filter accepts, in milliseconds |
+| `max_imu_dt_ms` | 200.0 | The longest gap between IMU messages it predicts over, in milliseconds |
+| `unobserved_variance` | 100.0 | The variance used for a part of a message its source doesn't measure, marked with a variance of 0 or less. Keep it at or below 1e4 |
+| `initial_covariance.position`, `.velocity`, `.orientation` | 0.0 | The initial uncertainty of each state |
+| `initial_covariance.bias_acc`, `.bias_gyro` | 1e-8 | The initial uncertainty of the IMU biases |
+| `imu_params.accelerometer_noise_density` | 1e-3 | The accelerometer noise |
+| `imu_params.gyroscope_noise_density` | 1e-4 | The gyroscope noise |
+| `imu_params.accelerometer_random_walk` | 1e-4 | How fast the accelerometer bias wanders |
+| `imu_params.gyroscope_random_walk` | 1e-5 | How fast the gyroscope bias wanders |
+| `earth_map_transform.static_tf` | true | Publish `earth → map` once, as a static transform |
+| `earth_map_transform.set_earth_map` | false | Place `map` with a fixed pose. Every source must then have `set_earth_map` false, or its first pose replaces it |
+| `preflight_correction.variance` | 1e-5 | How firmly the state is held at the start pose until the drone first flies |
+| `preflight_correction.position.x`, `.y`, `.z` | 0.0 | The start position in `map`, in meters |
+| `preflight_correction.orientation.roll`, `.pitch`, `.yaw` | 0.0 | The start orientation in `map`, in radians |
+| `verbose` | true | Log the filter's status |
+| `debug_verbose` | false | Log every step, for tuning |
+| `internal_ekf_debug_topics` | empty | A topic prefix for the filter's internal state. Empty turns it off |
+
+The default source, `posestamped1`, reads a `PoseStamped` on `ground_truth/pose` and places `map`.
+
+When the IMU stops, the filter can predict from the commands sent to the drone instead, with the
+`imu_model_fallback` settings. They're described in the plugin's README.
+
+### Correction sources
+
+Each name in `update_topics` has a block of its own, such as `simple_ekf.mocap.topic`:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `topic` | | The topic. Required |
+| `type` | | The full message type, such as `geometry_msgs/msg/PoseStamped`. Required |
+| `set_earth_map` | | Place `map` with this source's first pose. Required |
+| `use_message_covariance` | | Use the covariance in the messages instead of the fixed values below. Required |
+| `is_odometry` | true for `nav_msgs/msg/Odometry`, false for the rest | Correct `odom → base_link` for a source that drifts, or `map → odom` for an absolute one |
+| `position_covariance`, `orientation_covariance` | 1e-4 and 1e-5 on each axis | The fixed noise of a pose source |
+| `position_multiplier`, `orientation_multiplier` | 1.0 on each axis | Scale the message covariance of a pose source |
+| `linear_covariance` | 1e-2 on each axis | The fixed noise of a velocity source |
+| `linear_multiplier` | 1.0 on each axis | Scale the message covariance of a velocity source |
+| `is_body_frame` | true | Read a velocity source in `base_link`. When false, the frame comes from the message |
+| `rigid_body_name` | | The rigid body, for motion capture. Required for that type |
+| `update_rate_hz` | 0.0 | The most corrections per second from this source. 0 means no limit |
+| `innovation_gate` | 0.0 | Reject corrections more than this many standard deviations from the estimate. 0 turns it off |
+| `innovation_gate_timeout` | 1.0 | After this many seconds of rejections, accept the source again |
+| `reject_repeated_positions` | true for motion capture | Drop poses that repeat the last position |
+| `repeated_position_threshold` | 1e-6 | How close a position must be to count as repeated, in meters |
+
+The sources can be `geometry_msgs/msg/PoseStamped`, `geometry_msgs/msg/PoseWithCovarianceStamped`,
+`nav_msgs/msg/Odometry`, `mocap4r2_msgs/msg/RigidBodies` and
+`geometry_msgs/msg/TwistWithCovarianceStamped`, written in full. Any other type is ignored. The
+plugin's [README](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/simple_ekf)
+explains how to tune the filter.

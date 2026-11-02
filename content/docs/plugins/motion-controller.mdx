@@ -1,0 +1,173 @@
+---
+title: Motion controller
+description: The PID speed, differential flatness and geometric controllers, and every gain they take.
+icon: Gauge
+---
+
+The motion controller turns the references a behavior sends into commands the platform accepts, and
+its plugin holds the control law. How the controller picks a mode and when it steps aside is on the
+[motion controller](/docs/concepts/motion-controller) concept page.
+
+| Plugin | Takes | Sends | Needs the mass |
+| --- | --- | --- | --- |
+| `pid_speed_controller` | Position, speed, speed in a plane or trajectory, with either yaw mode | Speed with a yaw rate | No |
+| `differential_flatness_controller` | Trajectory with a yaw angle | Body rates and thrust | Yes |
+| `geometric_controller` | Position or speed with either yaw mode, or trajectory with a yaw angle | Body rates and thrust, or speed with a yaw rate | Yes, for body rates |
+
+## Choosing a plugin
+
+- **PID speed** works with any platform that takes velocities, which is most real drones, Gazebo and
+  the multirotor simulator. It's the only one that serves speed in a plane.
+- **Differential flatness** tracks trajectories on a platform that takes body rates and thrust, and
+  uses the trajectory's acceleration as a feed-forward. It only takes trajectories, so the behaviors
+  need their trajectory plugins.
+- **Geometric** also drives body rates with the trajectory's acceleration as a feed-forward, but takes
+  position and speed references too. When the platform doesn't take body rates, or the mass isn't
+  set, it sends velocities instead.
+
+## Running it
+
+```bash
+ros2 launch as2_motion_controller controller_launch.py \
+  namespace:=drone0 \
+  plugin_name:=pid_speed_controller \
+  plugin_config_file:=config/pid_speed_controller.yaml
+```
+
+Add `use_sim_time:=true` in simulation. Your plugin file is merged over the plugin's defaults, so it
+only needs the gains you change. The gains sit under the plugin's name:
+
+```yaml title="config/pid_speed_controller.yaml"
+/**:
+  ros__parameters:
+    pid_speed_controller:
+      position_control:
+        kp: {x: 1.0, y: 1.0, z: 1.0}
+        ki: {x: 0.01, y: 0.01, z: 0.01}
+      yaw_control:
+        kp: 1.0
+```
+
+<Callout type="warn" title="Set the gains for every mode you fly">
+  Every default gain is 0 for PID speed and geometric, and they refuse a mode whose gains are all 0.
+  The controller then won't start that mode. Write every gain as a decimal, `1.0` rather than `1`.
+  A whole number stops the controller when it starts.
+</Callout>
+
+Gains can be changed while flying, for example to tune them:
+
+```bash
+ros2 param set /drone0/controller_manager pid_speed_controller.position_control.kp.x 1.5
+```
+
+## PID speed
+
+PID loops that turn each kind of reference into a velocity and a yaw rate. With a position
+reference, a PID on the position error gives the velocity. With a trajectory, one PID acts on the
+position error with its derivative on the velocity error. The setpoint's acceleration isn't used.
+With speed in a plane, the height comes from its own PID on the reference height.
+
+| Loop | Turns | Into |
+| --- | --- | --- |
+| `position_control` | A position error | A velocity |
+| `speed_control` | A velocity error | A velocity, when `use_bypass` is false |
+| `trajectory_control` | A position and velocity error | A velocity |
+| `speed_in_a_plane_control.height` | A height error | A vertical velocity |
+| `speed_in_a_plane_control.speed` | A horizontal velocity error | A horizontal velocity |
+| `yaw_control` | A yaw error | A yaw rate |
+
+Each loop takes these settings, shown here for `position_control`:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `position_control.kp.x`, `.y`, `.z` | 0.0 | The proportional gains |
+| `position_control.ki.x`, `.y`, `.z` | 0.0 | The integral gains |
+| `position_control.kd.x`, `.y`, `.z` | 0.0 | The derivative gains |
+| `position_control.antiwindup_cte` | 0.0 | Caps the accumulated error on each axis. 0 means no cap |
+| `position_control.alpha` | 0.0 | Filters the derivative, from 0 to 1. 1 means no filter, and 0 turns the derivative off |
+| `position_control.reset_integral` | false | Clears the accumulated error when the error changes sign and the cap is exceeded |
+
+The default `alpha` of 0 turns the derivative off, so raise it before tuning `kd`. A few loops differ
+from the pattern:
+
+- `yaw_control` and `speed_in_a_plane_control.height` take single gains, with no axes.
+- `speed_in_a_plane_control.speed` takes `x` and `y` only.
+- `speed_in_a_plane_control` takes `antiwindup_cte`, `alpha` and `reset_integral` once, for both its
+  loops. Its `antiwindup_cte` only reaches the height loop for now.
+- `trajectory_control` ignores `alpha`.
+
+A mode needs non-zero gains in its loop, and every mode needs a yaw gain. Speed references are the
+exception while `use_bypass` is on. Speed in a plane still needs a non-zero `speed` gain, even with
+bypass on.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `use_bypass` | true | Passes velocity references through instead of running `speed_control` |
+| `proportional_limitation` | true | Scales the whole velocity down when it's over the speed limit of a position reference, so its direction stays the same |
+| `debug.desired_velocity_topic` | `desired_velocity` | Publishes the velocity under `debug/controller/`. Empty turns it off |
+
+With a position reference, the speed the behavior sends becomes a speed limit on each axis. The
+plugin's `use_bypass` is separate from the controller's own. When the controller's is on and the
+platform takes velocities, speed references skip the plugin entirely.
+
+## Differential flatness
+
+Computes the force the drone needs from the position and velocity errors, gravity and the
+trajectory's acceleration. It turns that force into a desired attitude and sends body rates toward
+it, with the thrust in newtons.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `mass` | 0.82 | The drone's mass, in kg |
+| `trajectory_control.kp.x`, `.y`, `.z` | 6.0, 6.0, 6.0 | The position gains, in N/m |
+| `trajectory_control.kd.x`, `.y`, `.z` | 1.5, 1.5, 3.0 | The velocity gains, in N·s/m |
+| `trajectory_control.ki.x`, `.y`, `.z` | 0.005, 0.005, 0.065 | The integral gains. They have almost no effect for now |
+| `trajectory_control.antiwindup_cte` | 1.0 | The largest integral force, in newtons |
+| `trajectory_control.roll_control.kp` | 5.5 | The roll attitude gain |
+| `trajectory_control.pitch_control.kp` | 5.5 | The pitch attitude gain |
+| `trajectory_control.yaw_control.kp` | 2.0 | The yaw attitude gain |
+
+Set `mass` to your drone's real mass. The platform has to take thrust in newtons.
+
+## Geometric
+
+Cascaded PID loops from position to velocity to acceleration, followed by a geometric attitude
+controller that sends body rates and thrust in newtons. Trajectories skip the cascade and use one
+PID plus the trajectory's acceleration.
+
+When it sends velocities instead, it stops after the position loop and sends the velocity with a
+yaw rate. Trajectories then use the `position` gains plus the trajectory's velocity.
+
+The `kp`, `ki` and `kd` gains are lists of three values, for x, y and z. The other settings are
+single values.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `position.kp`, `.ki`, `.kd` | [0.0, 0.0, 0.0] | Turn the position error into a velocity |
+| `position.antiwindup_cte` | 0.0 | Caps the accumulated error. 0 means no cap |
+| `position.alpha` | 1.0 | Filters the derivative, from 0 to 1. 1 means no filter |
+| `velocity.kp`, `.ki`, `.kd` | [0.0, 0.0, 0.0] | Turn the velocity error into an acceleration |
+| `velocity.antiwindup_cte`, `velocity.alpha` | 0.0, 1.0 | As for `position` |
+| `velocity.saturation_upper`, `velocity.saturation_lower` | [0.0, 0.0, 0.0] | The acceleration limits, in m/s². Equal values turn them off |
+| `trajectory.kp`, `.ki`, `.kd` | [0.0, 0.0, 0.0] | Turn the trajectory's position and velocity errors into an acceleration |
+| `trajectory.antiwindup_cte` | 0.0 | Caps the accumulated error |
+| `yaw.kp`, `.ki`, `.kd` | 0.0 | Turn the yaw error into a yaw rate, when sending velocities |
+| `yaw.antiwindup_cte`, `yaw.alpha` | 0.0, 1.0 | As for `position` |
+| `geometric.mass` | 0.0 | The drone's mass, in kg |
+| `geometric.rotation_kp` | [0.0, 0.0, 0.0] | The attitude gains for roll, pitch and yaw |
+| `geometric.yaw_speed_limit` | 0.0 | The largest yaw rate a yaw rate reference can ask for, in rad/s. 0 means no limit |
+
+To use the acceleration limits, set both, with every value of `saturation_lower` below
+`saturation_upper`. Setting only the upper one leaves the lower at 0, which blocks every negative
+acceleration.
+
+Only the `kp` gains decide which modes are available:
+
+| Sending | Needs |
+| --- | --- |
+| Body rates | `geometric.mass` and every `rotation_kp` above 0, `velocity.kp`, plus `position.kp` for position references and `trajectory.kp` for trajectories |
+| Velocities | `yaw.kp` above 0, plus `position.kp` for position references and trajectories |
+
+With a position reference, the speed the behavior sends limits the size of the velocity. Debug
+topics are set with `debug.desired_velocity_topic`, `debug.acceleration_topic` and
+`debug.velocity_norm_topic`.

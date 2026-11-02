@@ -1,0 +1,51 @@
+---
+title: Overview
+description: The as2 command for building, testing and moving around a source workspace, and fetching example projects.
+icon: Terminal
+---
+
+The `as2` command wraps the everyday tasks of working on Aerostack2 from source. It builds and tests
+packages from any directory, jumps to a package's folder, and downloads the example projects.
+
+<Callout title="For source workspaces">
+  The CLI works in a colcon workspace built from source against a ROS 2 install in `/opt/ros`. It
+  doesn't apply to Pixi or Docker installs.
+</Callout>
+
+## Set up
+
+Point `AEROSTACK2_PATH` at the Aerostack2 folder inside your workspace and load the CLI from your
+shell's startup file. It works in bash and zsh, with tab completion in bash:
+
+```bash title="~/.bashrc"
+source /opt/ros/humble/setup.bash
+export AEROSTACK2_PATH=$HOME/aerostack2_ws/src/aerostack2
+source $AEROSTACK2_PATH/as2_cli/setup_env.bash
+```
+
+`setup_env.bash` defines the `as2` command and sources the workspace's `install/setup.bash` once
+it's built. The workspace is taken as the folder two levels above `AEROSTACK2_PATH`.
+
+It also sets `AEROSTACK2_SIMULATION_DRONE_ID`, which many launch files use as the default
+namespace, to `drone_sim_<user>_0`. The value is kept in `as2_cli/env_variables.bash`, where you can
+change it.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| [`as2 build`](/docs/cli/build-and-test#build) | Builds the workspace, or a package and what it depends on |
+| [`as2 test`](/docs/cli/build-and-test#test) | Runs the tests of the workspace or of one package |
+| [`as2 clean`](/docs/cli/build-and-test#clean) | Removes build output, for some packages or the whole workspace |
+| [`as2 list`](/docs/cli/packages#list) | Lists the packages in the workspace |
+| [`as2 cd`](/docs/cli/packages#cd) | Goes to a package's folder, a project's folder or the Aerostack2 folder |
+| [`as2 project`](/docs/cli/projects) | Lists and downloads the example projects |
+
+Every command except `as2 cd` prints its help with `-h`. Short flags can be combined, so `-dv` is
+the same as `-d -v`.
+
+<Cards>
+  <Card title="Build and test" href="/docs/cli/build-and-test" description="Build, test and clean packages from any directory." />
+  <Card title="Packages and folders" href="/docs/cli/packages" description="List the workspace's packages and jump to their folders." />
+  <Card title="Projects" href="/docs/cli/projects" description="Download the example projects and move into them." />
+</Cards>

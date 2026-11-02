@@ -1,0 +1,101 @@
+---
+title: Frames
+description: The coordinate frames every drone uses, how they relate, and which one to use when.
+icon: Axis3d
+---
+
+Every position in Aerostack2 belongs to a coordinate frame. A point like `[2.0, 0.0, 1.0]` means
+nothing until you say what it's measured from, whether that's the world, the place the drone took
+off from, or the drone itself. Aerostack2 gives every drone the same tree of frames, published through
+[TF](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Tf2.html), so any component can
+convert a position from one frame to another.
+
+<FrameTree />
+
+## The frames
+
+The tree follows the ROS conventions in [REP 105](https://ros.org/reps/rep-0105.html):
+
+| Frame | What it is | Name for `drone0` |
+| --- | --- | --- |
+| `earth` | The world frame, shared by every drone. Missions usually give positions here | `earth` |
+| `map` | The drone's local world frame, placed in `earth` where the drone starts | `drone0/map` |
+| `odom` | A frame that moves smoothly with the drone's own motion estimate, without sudden jumps | `drone0/odom` |
+| `base_link` | The drone's body: its centre, facing forward | `drone0/base_link` |
+
+`earth` has no namespace because every drone shares it. The other three are prefixed with the
+drone's namespace, so two drones never mix up their frames.
+
+### Axes
+
+Following [REP 103](https://ros.org/reps/rep-0103.html), the world frames `earth`, `map` and `odom`
+are **ENU**, so x points east, y north and z up. The body frame `base_link` is **FLU**, so x points
+forward, y to the left and z up. Angles are in radians and positive yaw turns the drone
+to the left.
+
+## How the transforms change
+
+Each link in the tree changes differently, and that is the reason there are three of them:
+
+- **`earth` → `map` is static.** The state estimator sets it once at startup. With a ground-truth
+  source it's the first pose received, so the drone starts at the origin of its own `map`; with GPS
+  it comes from the first fix. It can also be fixed in the configuration.
+- **`map` → `odom` jumps.** It holds the corrections from absolute measurements. When a correction
+  arrives, this transform jumps to absorb it, so the rest of the tree doesn't have to.
+- **`odom` → `base_link` is smooth.** It follows the drone's motion at the rate of its sensors and
+  never jumps, although it slowly drifts.
+
+Splitting them like this means a component can choose what it needs. The motion controller works in
+`odom` by default, so a sudden correction doesn't make the drone lurch.
+Missions work in `earth`, where positions stay accurate over time.
+
+The [state estimator](/docs/concepts/state-estimator) publishes all three transforms. Its plugins
+decide what goes into each one.
+
+## Frames in practice
+
+### Missions
+
+The Python API gives positions in `earth` unless you name another frame. To move relative to the
+drone instead, pass its body frame:
+
+```python
+# 2 m east of the earth origin, at 1 m height
+drone.go_to.go_to_point([2.0, 0.0, 1.0], speed=1.0)
+
+# 1 m ahead of where the drone is now, at the same height
+drone.go_to.go_to_point([1.0, 0.0, 0.0], speed=0.5, frame_id="drone0/base_link")
+```
+
+The go-to behavior converts the goal into `earth` when it accepts it. A goal in `base_link` is
+fixed at that moment and doesn't keep moving with the drone.
+
+### Motion references
+
+Every motion reference carries a frame ID in its header. The motion controller uses TF to convert it
+into the frame it controls in, so behaviors can send references in whatever frame suits them.
+
+### GPS
+
+When the state estimator is given a GPS origin, `earth` is anchored to a latitude, longitude and
+altitude. Positions in `earth` are still in metres, east, north and up from that point, but they now
+have a place on the planet. That's what lets a mission fly to GPS coordinates. The Python API reads
+the origin from the `get_origin` service and converts each coordinate into `earth`.
+
+### Several drones
+
+Because `earth` is shared, a position in `earth` means the same place for every drone. That's what
+makes formations and swarm missions possible. Each drone's `map`, on the other hand, starts where
+that drone started, so `[0, 0, 1]` in `drone0/map` and in `drone1/map` are two different places.
+
+For drones that use GPS, give them the same origin so their `earth` frames agree.
+
+## Frame names
+
+Every Aerostack2 node reads the frame names from four parameters, `earth_frame_id`, `map_frame_id`,
+`odom_frame_id` and `base_frame_id`. The defaults are the names above, and you rarely need to change
+them.
+
+A leading `/` keeps a name out of the namespace, which is how `earth` stays shared. Its default is
+`/earth`. An empty name resolves to the bare namespace. Gazebo needs this for `base_frame_id`,
+because it names each drone's body frame after the model, `drone0`, not `drone0/base_link`.

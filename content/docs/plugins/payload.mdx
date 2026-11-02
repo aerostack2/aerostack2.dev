@@ -1,0 +1,98 @@
+---
+title: Payload
+description: The gripper plugins that open and close a two-finger gripper in Gazebo or a servo on a real drone.
+icon: Grip
+---
+
+The gripper behavior opens and closes a gripper, and its plugin knows how to drive it.
+
+| Plugin | Drives |
+| --- | --- |
+| `two_fingers` | The two-finger gripper of the Gazebo simulation |
+| `dc_servo` | A gripper moved by a servo, through a PWM driver you provide |
+
+The behavior serves the `GripperHandlerBehavior` action, of type `as2_msgs/action/GripperHandler`.
+Its goal is one flag, `request_gripper`. True closes the gripper and false opens it. The feedback's
+`state_gripper` is true while it's closed.
+
+The gripper moves as soon as the goal arrives, and the behavior keeps running while it holds. It
+never finishes on its own, so don't wait for a result. Send a new goal to move the gripper again,
+and stop the behavior when you're done:
+
+```bash
+ros2 action send_goal /drone0/GripperHandlerBehavior as2_msgs/action/GripperHandler \
+  "{request_gripper: true}"
+
+ros2 service call /drone0/GripperHandlerBehavior/_behavior/stop std_srvs/srv/Trigger
+```
+
+There's no Python API module for the gripper yet. From a mission, use an rclpy action client.
+
+## Running it
+
+Each plugin has its own launch file:
+
+```bash
+ros2 launch as2_behaviors_payload two_fingers.launch.py namespace:=drone0
+ros2 launch as2_behaviors_payload dc_servo_gripper.launch.py namespace:=drone0
+```
+
+Every parameter below is also a launch argument, such as `angle_to_open:=10.0`. A file given as
+`plugin_config_file` is merged over the defaults.
+
+## Two fingers
+
+`two_fingers` sends a position to each finger joint of the Gazebo `two_fingers_gripper` model. Add
+the gripper to the payload of an `f330` drone in the
+[world file](/docs/aerial-platforms/gazebo-simulation#the-world-file):
+
+```yaml title="config/world.yaml"
+drones:
+  - model_type: "f330"
+    model_name: "drone0"
+    payload:
+      - model_type: "two_fingers_gripper"
+        model_name: "gripper"
+```
+
+The other drone models also carry the gripper, but its fingers only move when the drone is named
+`drone0`.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `l_finger_open` | 1.0 | The left finger's angle when open, in radians |
+| `r_finger_open` | -1.0 | The right finger's angle when open, in radians |
+| `l_finger_close` | 0.0 | The left finger's angle when closed, in radians |
+| `r_finger_close` | 0.0 | The right finger's angle when closed, in radians |
+| `topic_l_finger` | `/gz/<namespace>/joint/r_gripper_l_finger_joint/cmd_pos` | The left finger's command topic |
+| `topic_r_finger` | `/gz/<namespace>/joint/r_gripper_r_finger_joint/cmd_pos` | The right finger's command topic |
+
+The launch file builds the finger topics from the namespace and ignores them on the launch line.
+To change them, use `plugin_config_file`.
+
+When the behavior ends for any reason, the gripper opens. Keep the behavior running for as long as
+the drone carries something.
+
+## DC servo
+
+`dc_servo` turns an angle into a PWM duty cycle and publishes it as a `std_msgs/msg/Float64` on
+`gripper_pwm`, in the drone's namespace. A servo driver on the drone has to apply it, and Aerostack2
+doesn't ship one. The duty cycle grows linearly from `duty_min` at 0 degrees to `duty_max` at
+`max_angle`, so with the defaults the gripper opens at 4.5% and closes at 8.0%.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `angle_to_open` | 6.43 | The servo angle that opens the gripper, in degrees |
+| `angle_to_close` | 51.4 | The servo angle that closes it, in degrees |
+| `max_angle` | 90.0 | The servo's full range, in degrees |
+| `duty_min` | 4.0 | The duty cycle at 0 degrees, in percent |
+| `duty_max` | 11.0 | The duty cycle at `max_angle`, in percent |
+| `topic_pwm` | `gripper_pwm` | The topic the duty cycle is published on |
+
+When the behavior ends, it publishes -1 instead of opening the gripper, for the driver to release
+the servo.
+
+## Point gimbal
+
+The payload package also has the point gimbal behavior, which aims a gimbal at a point. It has no
+plugins, and the Python API runs it with the `point_gimbal` module.

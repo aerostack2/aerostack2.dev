@@ -1,0 +1,125 @@
+---
+title: Behaviors
+description: The skills a drone can perform, how they're started and controlled, and the behaviors that come with Aerostack2.
+icon: Workflow
+---
+
+A behavior is a skill the drone can perform, like taking off, going to a point, following a path or
+pointing a gimbal. Missions are built by running behaviors one after another, or several at once.
+
+Every behavior has the same interface. You start it with a goal, follow its progress, and can change
+the goal, pause it, resume it or stop it. A mission doesn't need to know how a behavior does its job.
+It asks for a landing the same way whether the drone descends slowly or lands on its own.
+
+Each behavior runs as its own node in the drone's namespace, and serves one goal at a time.
+
+## The life of a behavior
+
+<BehaviorLifecycle />
+
+A behavior waits idle until it gets a goal. If the goal makes sense, it starts running and reports
+feedback, such as the distance left to a waypoint. Most behaviors end on their own when they reach
+their goal or fail. A few, like follow reference, keep running until they're stopped.
+
+Every request goes through standard ROS 2 interfaces, named after the behavior. For the go to
+behavior of `drone0` they are:
+
+| Request | Interface | Type |
+| --- | --- | --- |
+| Start | The `/drone0/GoToBehavior` action | `as2_msgs/action/GoToWaypoint` |
+| Modify | `/drone0/GoToBehavior/_behavior/modify` | The action's goal, as a service |
+| Pause, resume, stop | `/drone0/GoToBehavior/_behavior/{pause,resume,stop}` | `std_srvs/Trigger` |
+| Status | `/drone0/GoToBehavior/_behavior/behavior_status` | `as2_msgs/BehaviorStatus` |
+
+The feedback and result come through the action, and cancelling the action is the same as a stop.
+The status topic publishes idle, running or paused ten times a second.
+
+## Behaviors in a mission
+
+The [Python API](/docs/api) wraps each behavior in a module of the drone interface. Calling it
+starts the behavior and, by default, waits until it ends:
+
+```python
+drone.go_to(10.0, 0.0, 2.0, speed=1.0)
+```
+
+With `wait=False` the call returns right away and the mission can control the behavior while it
+runs:
+
+```python
+drone.go_to(10.0, 0.0, 2.0, speed=1.0, wait=False)
+drone.go_to.pause()
+drone.go_to.resume(wait_result=False)
+drone.go_to.modify(10.0, 5.0, 2.0, speed=1.0)
+drone.go_to.stop()
+```
+
+Behavior trees and the mission interpreter call behaviors through the same interfaces.
+
+## Plugins
+
+Like the [estimator](/docs/concepts/state-estimator) and the
+[controller](/docs/concepts/motion-controller), most behaviors load their algorithm as a plugin. The
+motion behaviors come with several, which differ in the motion references they send:
+
+| Behavior | Plugins |
+| --- | --- |
+| Take off | `takeoff_plugin_speed`, `takeoff_plugin_position`, `takeoff_plugin_trajectory`, `takeoff_plugin_platform` |
+| Land | `land_plugin_speed`, `land_plugin_position`, `land_plugin_trajectory`, `land_plugin_platform` |
+| Go to | `go_to_plugin_position`, `go_to_plugin_trajectory` |
+| Follow path | `follow_path_plugin_position`, `follow_path_plugin_trajectory` |
+| Follow reference | `follow_reference_plugin_position`, `follow_reference_plugin_trajectory` |
+
+The position plugins send position references, and the speed plugins send velocities. The
+trajectory plugins hand the motion to the trajectory generation behavior, which has to be running.
+The platform plugins use the platform's own take-off and landing, described on the
+[aerial platform](/docs/concepts/aerial-platform#native-take-off-and-landing) page.
+
+The plugins are chosen in the configuration:
+
+```yaml title="config/config.yaml"
+/**:
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_position"
+  GoToBehavior:
+    ros__parameters:
+      go_to_plugin_name: "go_to_plugin_trajectory"
+```
+
+## Available behaviors
+
+| Package | Behaviors |
+| --- | --- |
+| `as2_behaviors_motion` | Take off, land, go to, follow path, follow reference |
+| `as2_behaviors_trajectory_generation` | [Polynomial trajectory generation](/docs/behaviors/trajectory-generation) |
+| `as2_behaviors_path_planning` | Navigate to a point around obstacles, with A* or Voronoi |
+| `as2_behaviors_object_perception` | [Detect objects](/docs/behaviors/perception), such as ArUco markers |
+| `as2_behaviors_payload` | [Point a gimbal and drive a gripper](/docs/behaviors/payload) |
+| `as2_behaviors_swarm_flocking` | [Fly several drones as a swarm](/docs/behaviors/swarm-flocking) |
+| `as2_behaviors_param_estimation` | [Estimate the drone's mass and external forces](/docs/behaviors/param-estimation) |
+| `as2_behaviors_platform` | Arm and switch to offboard, as behaviors |
+
+The motion behaviors are launched together:
+
+```bash
+ros2 launch as2_behaviors_motion motion_behaviors_launch.py \
+  namespace:=drone0 \
+  config_file:=config/config.yaml
+```
+
+## Writing a behavior
+
+A behavior is a node that inherits from `as2_behavior::BehaviorServer`, templated on its action
+type. The server takes care of the interfaces and the states, and calls these methods:
+
+| Method | Called when |
+| --- | --- |
+| `on_activate` | A goal arrives. Return false to reject it. |
+| `on_modify` | The goal changes while running. |
+| `on_pause`, `on_resume` | The behavior is paused or resumed. |
+| `on_deactivate` | The behavior is stopped. |
+| `on_run` | On every cycle while running, at `run_frequency`, which is 10 Hz by default. It fills the feedback and returns whether the behavior is still running, succeeded or failed. |
+| `on_execution_end` | The behavior ends for any reason, with how it ended. |
+
+The [behavior tutorial](/docs/tutorials/behavior) walks through a complete one.

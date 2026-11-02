@@ -1,0 +1,56 @@
+---
+title: Overview
+description: Every plugin that ships with Aerostack2, what each one does and how to pick one.
+icon: Puzzle
+---
+
+Many Aerostack2 components do their work through a plugin, loaded when the component starts. The
+component handles its ROS 2 interface, and the plugin holds the algorithm, so swapping a controller
+or a planner is a change of one parameter. Most components choose theirs with `plugin_name`.
+
+| Component | Plugins |
+| --- | --- |
+| [Motion controller](/docs/plugins/motion-controller) | `pid_speed_controller`, `differential_flatness_controller`, `geometric_controller` |
+| [State estimator](/docs/plugins/state-estimator) | `ground_truth`, `raw_odometry`, `simple_ekf` |
+| [Motion behaviors](/docs/plugins/motion-behaviors) | Position and trajectory plugins for every motion behavior, plus speed and platform plugins for take off and land |
+| [Trajectory generator](/docs/plugins/trajectory-generators) | `dynamic_mav_trajectory_generator`, `mav_trajectory_generator`, `gcopter_trajectory_generator`, `jerk_limited_trajectory_generator` |
+| [Path planning](/docs/plugins/path-planning) | `a_star`, `voronoi` |
+| [Map server](/docs/plugins/map-server) | `scan2occ_grid`, `depth2occ_grid`, `point_cloud2occ_grid` |
+| [Gripper](/docs/plugins/payload) | `two_fingers`, `dc_servo` |
+| [Object perception](/docs/plugins/perception) | `aruco` |
+
+## Common setups
+
+Which controller to use depends on the commands the platform accepts:
+
+| Controller sends | Controller | Platforms that accept it |
+| --- | --- | --- |
+| Velocities | `pid_speed_controller` | Gazebo, Crazyflie, Tello, DJI, PX4, MAVLink and the multirotor simulator |
+| Body rates and thrust | `differential_flatness_controller` or `geometric_controller` | Betaflight, PX4, MAVLink, the multirotor simulator, and Gazebo with its body rates control modes file |
+
+Differential flatness only takes trajectories, so pair it with the trajectory plugins of the motion
+behaviors and a [trajectory generator](/docs/plugins/trajectory-generators). The PID speed and
+geometric controllers also take position references, so the position plugins work with them.
+
+The state estimator depends on where the drone's position comes from. See
+[choosing a plugin](/docs/concepts/state-estimator#choosing-a-plugin).
+
+## Plugins
+
+<Cards>
+  <Card title="Motion controller" href="/docs/plugins/motion-controller" description="PID speed, differential flatness and geometric control, with every gain." />
+  <Card title="State estimator" href="/docs/plugins/state-estimator" description="Ground truth, raw odometry and the EKF, with every setting." />
+  <Card title="Motion behaviors" href="/docs/plugins/motion-behaviors" description="How take off, land, go to and follow behaviors move the drone." />
+  <Card title="Trajectory generators" href="/docs/plugins/trajectory-generators" description="Four planners that turn waypoints into smooth trajectories." />
+  <Card title="Path planning" href="/docs/plugins/path-planning" description="A* and Voronoi planners on an occupancy grid." />
+  <Card title="Map server" href="/docs/plugins/map-server" description="Occupancy grids from a lidar, a depth camera or a point cloud." />
+  <Card title="Payload" href="/docs/plugins/payload" description="Gripper plugins for Gazebo and for a servo." />
+  <Card title="Perception" href="/docs/plugins/perception" description="ArUco marker detection." />
+</Cards>
+
+## Writing a plugin
+
+A plugin is a class that inherits from its component's base class, exported with pluginlib. The
+tutorials walk through a [controller plugin](/docs/tutorials/controller-plugin), an
+[estimator plugin](/docs/tutorials/estimator-plugin) and a
+[follow reference plugin](/docs/tutorials/follow-reference-plugin).

@@ -1,0 +1,119 @@
+---
+title: DJI OSDK
+description: Fly DJI Matrice 210 V2 and M300 RTK drones through the DJI Onboard SDK.
+icon: PlaneTakeoff
+---
+
+<Callout title="ROS 2 Humble only">
+  The DJI OSDK platform isn't supported on ROS 2 Jazzy yet. Build it on Humble.
+</Callout>
+
+The DJI OSDK platform flies DJI Matrice drones through the
+[DJI Onboard SDK](https://github.com/dji-sdk/Onboard-SDK). It works with the Matrice 210 V2, the
+Matrice 210 RTK V2 and the Matrice 300 RTK. DJI's flight controller keeps flying the drone, and
+Aerostack2 sends it velocity setpoints from a companion computer. The drone takes off and lands by
+itself.
+
+For newer DJI drones such as the Matrice 350 RTK or the M30, use the
+[DJI PSDK](/docs/aerial-platforms/dji-psdk) platform instead.
+
+## Install
+
+Follow DJI's [device connection](https://developer.dji.com/onboard-sdk/documentation/quickstart/device-connection.html)
+guide to wire the companion computer to the drone. A UART link carries the flight commands, and an
+optional USB link gives access to the camera, the gimbal and advanced sensing. Register an app on
+the [DJI developer site](https://developer.dji.com) to get an app ID and key.
+
+Then build the platform. The build downloads the Onboard SDK, so it needs internet access.
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_dji_osdk.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install --packages-up-to as2_platform_dji_osdk
+```
+
+The user running the platform needs access to the serial and USB devices, through udev rules or
+group membership.
+
+## Launch
+
+The user configuration file holds the app credentials and the ports the drone is wired to:
+
+```text title="config/user_config.txt"
+app_id : 123456
+app_key : 0123456789abcdefghijklmnopqrstuvwxyz
+device : /dev/ttyUSB0
+baudrate : 921600
+acm_port : /dev/ttyACM0
+```
+
+```bash
+ros2 launch as2_platform_dji_osdk as2_platform_dji_osdk_launch.py \
+  namespace:=drone0 \
+  user_config_file:=config/user_config.txt
+```
+
+The platform activates the app with DJI when it starts.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 100.0 | How often commands are sent, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `enable_advanced_sensing` | false | Give access to the cameras and other sensors over USB |
+| `publish_camera` | true | Publish the main camera, when advanced sensing is on |
+| `enable_mop_channel` | false | Open a MOP channel to talk with a DJI mobile app |
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Hover | |
+| Speed | Angle or rate |
+
+That fits the PID speed controller. Velocities are sent in the `odom` frame and converted to DJI's
+north, east and up.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | The drone's fused GPS position, converted to a local frame |
+| `sensor_measurements/gps` | GPS fixes |
+| `sensor_measurements/battery` | The battery state |
+| `sensor_measurements/image_raw/image` | The main camera, with advanced sensing on |
+| `sensor_measurements/gimbal/attitude` | The gimbal's attitude |
+| `platform/info` | The platform status |
+
+The gimbal is commanded on `platform/gimbal/gimbal_command`. Publishing true on `camera/trigger`
+takes a photo.
+
+## With the rest of the stack
+
+Use the `raw_odometry` estimator plugin on the drone's odometry, and the platform's own take-off and
+landing:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_platform"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_platform"
+```
+
+## Things to know
+
+- Odometry starts at the first GPS fix with at least four satellites, and nothing is published
+  before that. The drone needs GPS to fly with this platform.
+- Arming doesn't start the motors. They start when the drone takes off.
+- Stopping the platform triggers DJI's emergency brake, which holds the drone in place.
+- The kill switch isn't available. Use the remote control to stop the motors.
+
+The [project_dji_osdk](https://github.com/aerostack2/project_dji_osdk) repository has a complete setup
+for a Matrice drone.

@@ -1,0 +1,44 @@
+---
+title: Packages and folders
+description: List the packages in a source workspace with as2 list, and jump to their folders with as2 cd.
+icon: FolderSearch
+---
+
+## List
+
+`as2 list` lists the ROS 2 packages in the workspace's `src` folder, Aerostack2's and any others,
+sorted by name:
+
+```bash
+as2 list
+as2 list -v
+```
+
+| Flag | What it does |
+| --- | --- |
+| `-v`, `--verbose` | Shows each package's folder |
+| `-p`, `--plain` | Prints without colors |
+| `--projects` | Lists the downloaded projects instead of the packages |
+
+## cd
+
+`as2 cd` moves the shell to a folder by name. With no name, it goes to the Aerostack2 folder:
+
+```bash
+as2 cd
+as2 cd motion_controller
+as2 cd projects
+```
+
+A name is looked up in this order:
+
+1. `projects`, the folder where the [example projects](/docs/cli/projects) are downloaded.
+2. A downloaded project with that name.
+3. A package with that exact name.
+4. A package with `as2_` in front of the name, so `as2 cd core` reaches `as2_core`.
+
+A name that matches nothing prints `package <name> not found`, and the shell stays where it was.
+
+In bash, tab completes package names after `as2 build`, `as2 test` and `as2 clean`, and package and
+project names after `as2 cd`. The names are read when `setup_env.bash` is sourced, so source it
+again to complete packages and projects added since.

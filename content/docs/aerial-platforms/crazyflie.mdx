@@ -1,0 +1,141 @@
+---
+title: Crazyflie
+description: Fly one or a swarm of Bitcraze Crazyflie nano quadcopters over a Crazyradio.
+icon: Feather
+---
+
+<Callout title="ROS 2 Humble only">
+  The Crazyflie platform isn't supported on ROS 2 Jazzy yet. Build it on Humble.
+</Callout>
+
+The Crazyflie platform flies [Bitcraze Crazyflie](https://www.bitcraze.io) 2.x nano quadcopters. It
+talks to them over a Crazyradio with the [crazyflie_cpp](https://github.com/whoenig/crazyflie_cpp)
+library, and one node can fly a whole swarm. The Crazyflie runs its own estimator and controller,
+and Aerostack2 sends it velocity setpoints.
+
+The Crazyflie needs a positioning deck or system to know where it is, such as a Flow deck, a
+Lighthouse system or motion capture. It can also carry a Multi-ranger deck and an AI deck camera.
+
+## Install
+
+Set up the Crazyradio and the drones with Bitcraze's tools first:
+
+1. Install [cfclient](https://www.bitcraze.io/documentation/repository/crazyflie-clients-python/master/installation/install/)
+   and the Crazyradio udev rules it describes.
+2. Update each Crazyflie's firmware from cfclient.
+3. Give each Crazyflie its own radio address under Connect, Configure 2.x. Drones on the same radio
+   channel need different addresses.
+
+Then build the platform. The build downloads crazyflie_cpp if it isn't installed, so it needs
+internet access.
+
+```bash
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_crazyflie.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install --packages-up-to as2_platform_crazyflie
+```
+
+## Launch
+
+The swarm file lists the drones to fly, one namespace each with its radio URI:
+
+```yaml title="config/swarm.yaml"
+/cf0:
+  platform:
+    ros__parameters:
+      uri: "radio://0/80/2M/E7E7E7E701"
+
+/cf1:
+  platform:
+    ros__parameters:
+      uri: "radio://0/80/2M/E7E7E7E702"
+```
+
+```bash
+ros2 launch as2_platform_crazyflie crazyflie_swarm_launch.py \
+  swarm_config_file:=config/swarm.yaml
+```
+
+The launch starts one node that creates a platform for every namespace with a `uri`, so the same
+command flies one drone or many. Startup waits until every radio link connects, retrying every few
+seconds.
+
+The platform configuration file applies to every drone, and the swarm file can override it per
+namespace:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 100.0 | How often commands are sent, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `controller_type` | 1 | The onboard controller. 0 any, 1 PID, 2 Mellinger, 3 INDI |
+| `estimator_type` | 2 | The onboard estimator. 0 any, 1 complementary, 2 Kalman |
+| `multi_ranger_deck` | false | Publish the Multi-ranger deck as a laser scan |
+| `external_odom` | false | Send Aerostack2's pose to the Crazyflie, for motion capture |
+| `external_odom_topic` | `external_odom` | The topic that triggers sending the pose |
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Speed | Rate |
+| Speed in a plane | Rate |
+
+That fits the PID speed controller. There's no hover mode, so the controller holds the drone in
+place itself.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | The Crazyflie's own state estimate |
+| `sensor_measurements/imu` | The IMU |
+| `sensor_measurements/battery` | The battery state |
+| `sensor_measurements/lidar/scan` | The Multi-ranger deck, when it's enabled |
+| `platform/info` | The platform status |
+
+## With the rest of the stack
+
+With a Flow deck or Lighthouse, the Crazyflie's estimate is good enough to fly on. Use the
+`raw_odometry` estimator plugin on its odometry:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+```
+
+With motion capture, use the `ground_truth` estimator on the mocap rigid body instead, and set
+`external_odom` to true. Each time a message arrives on `external_odom_topic`, the platform looks up
+the drone's pose in the TF tree and sends it to the Crazyflie's Kalman filter. Pointing that topic
+at `self_localization/pose` sends every new estimate.
+
+## AI deck camera
+
+For a Crazyflie with an AI deck, add the camera's IP address to its namespace in the swarm file. The
+swarm launch then starts a node that streams the camera over Wi-Fi:
+
+```yaml title="config/swarm.yaml"
+/cf0:
+  platform:
+    ros__parameters:
+      uri: "radio://0/80/2M/E7E7E7E701"
+  aideck_pub:
+    ros__parameters:
+      cam:
+        ip: "192.168.4.1"
+        port: 5000
+```
+
+## Things to know
+
+- Taking off and landing are done by Aerostack2's behaviors.
+- Arming only marks the platform as armed. The motors start with the first command.
+- Disarming and stopping the platform stop the motors. The kill switch sends the Crazyflie's
+  emergency stop.
+- The Crazyflie stops its motors by itself when setpoints stop arriving.
+
+The [project_crazyflie](https://github.com/aerostack2/project_crazyflie) repository has a complete
+setup for one or several Crazyflies.

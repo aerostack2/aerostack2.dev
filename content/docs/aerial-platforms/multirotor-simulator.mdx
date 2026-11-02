@@ -1,0 +1,107 @@
+---
+title: Multirotor simulator
+description: A lightweight multirotor simulator with no 3D world, fast to start and able to run anywhere.
+icon: MonitorPlay
+---
+
+The multirotor simulator simulates the physics of a multirotor without a 3D world or graphics. It
+starts in a second, runs on any machine including macOS through Pixi, and is the simulator the
+[Quickstart](/docs/getting-started/quickstart) uses. It's the fastest way to test missions,
+behaviors and controllers before moving to Gazebo or a real drone.
+
+It ships with Aerostack2 in the `as2_platform_multirotor_simulator` package, built on the
+[multirotor_simulator](https://github.com/RPS98/multirotor_simulator) library.
+
+## What it simulates
+
+The simulator models the drone's dynamics, its motors and an internal flight controller, so it
+accepts every common control mode, from body rates up to full trajectories. It also takes off and
+lands by itself when the [platform plugins](/docs/concepts/aerial-platform#native-take-off-and-landing)
+are used.
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/imu` | IMU with configurable noise |
+| `sensor_measurements/odom` | Odometry integrated from the noisy IMU, so it isn't exact |
+| `sensor_measurements/gps` | GPS fixes around the configured origin |
+| `ground_truth/pose`, `ground_truth/twist` | The exact pose and velocity |
+| `platform/info` | The platform status |
+
+It also simulates a gimbal, commanded on `platform/gimbal/gimbal_command`, for testing the point
+gimbal behavior. There's no camera or other perception sensor, since there's no world to see.
+
+## Launch
+
+```bash
+ros2 launch as2_platform_multirotor_simulator as2_platform_multirotor_simulator.launch.py \
+  namespace:=drone0 \
+  config_file:=config/config.yaml \
+  uav_config:=config/uav_config.yaml \
+  world_config:=config/world.yaml
+```
+
+Every file is optional. The package's defaults are always loaded first, so your files only need the
+values you change.
+
+| Argument | What it sets |
+| --- | --- |
+| `config_file` | Update and publish rates, and whether the internal controller uses odometry instead of ground truth |
+| `uav_config` | The drone's physical parameters, its internal controller gains, and the IMU and odometry noise |
+| `world_config` | The floor height, the GPS origin and where each drone starts |
+| `control_modes_file` | The control modes the platform accepts |
+
+## Several drones
+
+Launch the platform once per drone with a different namespace and the same world file. The world
+file can set values for every drone and override them per namespace, such as the start pose:
+
+```yaml title="config/world.yaml"
+/**:
+  platform:
+    ros__parameters:
+      gps_origin:
+        latitude: 40.4405287
+        longitude: -3.6898277
+        altitude: 100.0
+
+drone0:
+  platform:
+    ros__parameters:
+      vehicle_initial_pose:
+        x: 0.0
+        y: 0.0
+
+drone1:
+  platform:
+    ros__parameters:
+      vehicle_initial_pose:
+        x: 2.0
+        y: 0.0
+```
+
+## With the rest of the stack
+
+For the state estimator, use the `ground_truth` plugin with the simulator's own twist for a perfect
+state, or `raw_odometry` on `sensor_measurements/odom` to fly on imperfect odometry, closer to a real drone.
+Both the PID speed and the differential flatness controllers work with it.
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "ground_truth"
+      ground_truth:
+        twist_sub_topic: "ground_truth/twist"
+```
+
+The [project_as2_multirotor_simulator](https://github.com/aerostack2/project_as2_multirotor_simulator)
+repository has a complete setup with every component, a ground station and example missions.
+
+## Simulated time
+
+The simulator runs in real time by default. To run faster or slower, start the clock publisher and
+launch every node with `use_sim_time:=true`. Its `rtf` parameter sets the real-time factor.
+
+```bash
+ros2 launch as2_platform_multirotor_simulator sim_clock_publisher.launch.py
+```

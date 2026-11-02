@@ -1,0 +1,109 @@
+---
+title: MAVLink
+description: Fly autopilots over MAVLink through MAVROS, for when PX4's DDS bridge isn't an option.
+icon: Radio
+---
+
+The MAVLink platform talks to the autopilot over [MAVLink](https://mavlink.io) through
+[MAVROS](https://github.com/mavlink/mavros), which turns MAVLink messages into ROS 2 topics and
+services. It builds on ROS 2 Humble and Jazzy.
+
+It's written for PX4. It switches the autopilot to PX4's OFFBOARD mode and loads MAVROS's PX4
+configuration, so ArduPilot, which uses GUIDED mode instead, isn't supported. For PX4 1.14 or newer,
+the [Pixhawk](/docs/aerial-platforms/pixhawk) platform talks to PX4 directly and is the usual choice.
+This one fits when MAVLink is what you already have, for example an older PX4 or a telemetry radio.
+
+## Install
+
+Install MAVROS and the GeographicLib datasets it needs, then build the platform:
+
+```bash
+sudo apt install ros-$ROS_DISTRO-mavros ros-$ROS_DISTRO-mavros-extras
+wget https://raw.githubusercontent.com/mavlink/mavros/ros2/mavros/scripts/install_geographiclib_datasets.sh
+sudo bash install_geographiclib_datasets.sh
+
+cd ~/aerostack2_ws/src
+git clone https://github.com/aerostack2/as2_platform_mavlink.git
+cd ~/aerostack2_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install
+```
+
+## Launch
+
+Start MAVROS and the platform in the same namespace:
+
+```bash
+ros2 launch as2_platform_mavlink mavros_launch.py namespace:=drone0
+ros2 launch as2_platform_mavlink as2_platform_mavlink_launch.py namespace:=drone0
+```
+
+The MAVROS configuration file says where each drone's autopilot is, keyed by namespace. The default
+one points `drone0` to `drone3` at PX4's simulator ports. For a real drone, pass your own file with
+the autopilot's address, such as a serial port:
+
+```yaml title="config/mavros_config.yaml"
+drone0:
+  mavros/mavros_node:
+    ros__parameters:
+      fcu_url: "/dev/ttyACM0:921600"
+      tgt_system: 1
+```
+
+```bash
+ros2 launch as2_platform_mavlink mavros_launch.py namespace:=drone0 \
+  mavros_config_file:=config/mavros_config.yaml
+```
+
+The platform configuration file has the usual rates and the drone's thrust:
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `cmd_freq` | 100.0 | How often commands are sent, in Hz |
+| `info_freq` | 10.0 | How often `platform/info` is published, in Hz |
+| `max_thrust` | 15.0 | The thrust in newtons that maps to full throttle |
+| `min_thrust` | 0.15 | The lowest throttle sent, as a fraction |
+| `external_odom` | false | Send Aerostack2's state estimate to the autopilot as vision input |
+
+## Control modes
+
+| Control mode | Yaw |
+| --- | --- |
+| Position | Angle |
+| Speed | Rate |
+| Attitude | Angle |
+| Body rates | Rate |
+
+There's no hover mode, so the motion controller holds the drone in place itself. Speed fits the PID
+speed controller, and body rates fit the differential flatness controller.
+
+## Topics
+
+| Topic | Contents |
+| --- | --- |
+| `sensor_measurements/odom` | The autopilot's state estimate, in the drone's `odom` frame |
+| `sensor_measurements/imu` | The IMU, published by MAVROS |
+| `sensor_measurements/gps` | GPS fixes, published by MAVROS |
+| `sensor_measurements/battery` | The battery state, published by MAVROS |
+| `platform/info` | The platform status |
+
+## With the rest of the stack
+
+Use the `raw_odometry` estimator plugin on the autopilot's odometry:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+```
+
+When Aerostack2 knows more than the autopilot, set `external_odom` to true. The platform then sends
+the state estimate to MAVROS's vision pose and speed topics at 100 Hz, for the autopilot to fuse.
+
+## Things to know
+
+- Taking off and landing are done by Aerostack2's behaviors, not by the autopilot's own modes.
+- Switching to offboard also arms the drone if it isn't armed yet.
+- The platform never leaves offboard. Leave it from the remote control.
+- The kill switch doesn't work on this platform yet. Keep the remote control's kill switch at hand.

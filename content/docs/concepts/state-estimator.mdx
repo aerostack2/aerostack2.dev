@@ -1,0 +1,161 @@
+---
+title: State estimator
+description: How Aerostack2 works out where the drone is and how fast it's moving, and how to choose an estimator plugin.
+icon: LocateFixed
+---
+
+The state estimator answers one question for the rest of the stack, which is where the drone is
+and how fast it's moving. The motion controller needs it to close its loops, behaviors need it to
+know when a goal is reached, and missions read it through the Python API.
+
+It runs as one node per drone, `state_estimator`, which loads an estimator plugin. The plugin reads
+the sensors and does the estimation. It never publishes anything itself. It reports the state to the
+node, and the node publishes it, so every plugin produces exactly the same outputs.
+
+## Outputs
+
+| Output | Type | Frame |
+| --- | --- | --- |
+| `self_localization/pose` | `geometry_msgs/PoseStamped` | `earth` |
+| `self_localization/twist` | `geometry_msgs/TwistStamped` | `base_link` |
+| `/tf` and `/tf_static` | The transforms `earth → map → odom → base_link` | |
+
+What the estimator subscribes to depends on the plugin. A simulator's ground truth, the platform's
+odometry, an IMU, a motion capture system and GPS are all possible inputs.
+
+## The TF tree
+
+The estimator owns three transforms of the drone's TF tree, which [Frames](/docs/concepts/frames)
+explains in detail. The pose of the drone is the chain of all three, and each plugin splits it
+differently.
+
+<EstimatorTransforms />
+
+The split matters when something jumps. A plugin that puts the whole pose in `odom → base_link`
+passes every jump straight to the controller. The EKF puts corrections from absolute sources in
+`map → odom` instead, so `odom → base_link` stays smooth.
+
+## Choosing a plugin
+
+| Plugin | Use it when |
+| --- | --- |
+| `ground_truth` | You have an exact pose, from a simulator or a motion capture system. |
+| `raw_odometry` | Something else already computes odometry, like the autopilot or a LIO or VIO algorithm. |
+| `simple_ekf` | You need to fuse an IMU with one or more pose or velocity sources, or your pose source is slow, noisy or delayed. |
+
+The plugin is chosen with `plugin_name`, and its settings go in a block named after it. The
+[Quickstart](/docs/getting-started/quickstart) project uses the simulator's ground truth:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "ground_truth"
+      ground_truth:
+        twist_sub_topic: "ground_truth/twist"
+```
+
+<Callout type="warn" title="Misplaced settings are ignored">
+  A parameter at the wrong level or with a typo doesn't raise an error. The node starts with the
+  default and your setting has no effect. If a change seems to do nothing, check that it sits under
+  the plugin's block. The startup log lists every parameter the plugin read.
+</Callout>
+
+### Ground truth
+
+Takes an exact pose in the `earth` frame and turns it into the TF tree with no filtering. The pose
+comes from `ground_truth/pose` by default, or from a rigid body of a motion capture system when
+`mocap_sub_topic` is set.
+
+The twist is differentiated from the pose unless `twist_sub_topic` points to a topic with the
+source's own twist. Only set it to a topic that is published. If it stays silent, the node publishes
+the TF tree but never a pose.
+
+### Raw odometry
+
+Takes any odometry as it is and republishes it, without correcting it. The source is a
+`nav_msgs/Odometry` topic set with `odom_sub_topic`, which defaults to the platform's
+`sensor_measurements/odom`. It can be the autopilot of a PX4 or DJI drone, a LIO or VIO algorithm, or
+a tracking camera.
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+      raw_odometry:
+        odom_sub_topic: "/lio/odometry"
+```
+
+The frame names in the message are replaced with the drone's `odom` and `base_link`, not
+transformed, so the odometry has to describe the drone's body. If your algorithm tracks a sensor
+mounted away from the center, convert its output first. Drift isn't corrected either. To correct it
+with an absolute source, feed the odometry to the EKF instead.
+
+With `use_gps` on, the plugin also anchors the `earth` frame to a GPS position, called the origin.
+It's taken from the first fix by default, or set by hand or through the `set_origin` service. The
+rest of the stack reads it with `get_origin`, which is what lets a mission fly to GPS coordinates.
+
+### Simple EKF
+
+A 15-state extended Kalman filter. It predicts with the IMU and corrects with any number of
+sources listed in `update_topics`, each with its own topic, message type and noise:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "simple_ekf"
+      simple_ekf:
+        predict_topic: "sensor_measurements/imu"
+        update_topics: ["mocap"]
+        mocap:
+          topic: "/mocap/rigid_bodies"
+          type: "mocap4r2_msgs/msg/RigidBodies"
+          rigid_body_name: "drone0"
+          set_earth_map: true
+          use_message_covariance: false
+          position_covariance: [1e-4, 1e-4, 1e-4]
+          orientation_covariance: [1e-5, 1e-5, 1e-5]
+          is_odometry: false
+```
+
+The most important setting of each source is `is_odometry`, which says where its corrections land.
+An absolute source, like motion capture or a global localizer, corrects `map → odom`. A source that
+drifts, like visual odometry, corrects `odom → base_link`, so its drift never reaches the global
+frame. The default is `true` for odometry messages and `false` for everything else.
+
+While the drone waits on the ground before its first flight, the filter knows it's still and pins
+the state at the origin of `map`. That lets the IMU biases settle before take-off.
+
+The plugin's [README](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/simple_ekf)
+covers every parameter, the supported message types and how to tune the filter.
+
+## Parameters
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `plugin_name` | | The plugin to load. Required. |
+| `publish_hz` | `0.0` | How often the state is published, in Hz. `0` publishes on every update. |
+| `<plugin>.debug_publish_hz` | `-1.0` | Rate of the plugin's debug copy of the state. `-1` publishes on every update and `0` turns it off. |
+
+The frame names come from the parameters every Aerostack2 node shares, described under
+[Frame names](/docs/concepts/frames#frame-names).
+
+## Writing a plugin
+
+An estimator plugin inherits from `as2_state_estimator_plugin_base::StateEstimatorBase` and
+implements two methods. `onSetup` reads its parameters and subscribes to its sensors.
+`getTransformationTypesAvailable` lists the parts of the state the plugin is responsible for.
+
+From its callbacks, the plugin reports the state through `state_estimator_interface_`:
+
+```cpp
+state_estimator_interface_->setEarthToMap(transform, stamp, true);
+state_estimator_interface_->setMapToOdomPose(pose, stamp);
+state_estimator_interface_->setOdomToBaseLinkPose(pose, stamp);
+state_estimator_interface_->setTwistInBaseFrame(twist, stamp);
+```
+
+The node drops any report for a part the plugin didn't claim. The
+[estimator plugin tutorial](/docs/tutorials/estimator-plugin) walks through a complete one.

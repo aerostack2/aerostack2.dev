@@ -1,0 +1,5 @@
+{
+  "title": "CLI",
+  "icon": "Terminal",
+  "pages": ["index", "build-and-test", "packages", "projects"]
+}

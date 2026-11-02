@@ -1,0 +1,119 @@
+---
+title: Communication channels
+description: The standard channels that connect the components of a drone.
+icon: Network
+---
+
+The components of a drone talk to each other over a small set of standard channels. Each channel is
+a group of ROS 2 topics with fixed names, published under the drone's namespace, so
+`motion_reference/pose` for `drone0` is `/drone0/motion_reference/pose`. Because the names are fixed,
+any component can be replaced by another that uses the same channels.
+
+Four channels close the control loop. Select one to see its topics:
+
+<ControlLoopDiagram />
+
+## The channels
+
+| Channel | Topics | Published by | Used by |
+| --- | --- | --- | --- |
+| Motion references | `motion_reference/*` | Behaviors, motion reference handlers | Motion controller |
+| Actuator commands | `actuator_command/*` | Motion controller | Aerial platform |
+| Sensor measurements | `sensor_measurements/*`, `ground_truth/*` | Aerial platform, sensor drivers | State estimator, perception |
+| Self localization | `self_localization/*`, TF | State estimator | Controller, behaviors, user interfaces |
+| Platform status | `platform/info` | Aerial platform | Controller, behavior trees, user interfaces |
+| Alerts | `alert_event` | Missions, user interfaces | Aerial platform |
+
+### Motion references
+
+Motion references describe where the drone should be or how it should move. There are four topics:
+`pose`, `twist`, `trajectory` and `thrust`. How the motion controller reads them depends on its
+control mode. In position mode it follows the pose and takes the speed limit from the twist; in
+speed mode it follows the twist.
+
+<ModeMatrix
+  prefix="motion_reference/"
+  topics={["pose", "twist", "trajectory", "thrust"]}
+  rows={[
+    { mode: "Hover", none: "No topics. The drone holds its current position." },
+    { mode: "Position", uses: { pose: "target position", twist: "speed limit" } },
+    { mode: "Speed", uses: { twist: "velocity" } },
+    { mode: "Speed in a plane", uses: { pose: "height", twist: "horizontal velocity" } },
+    { mode: "Trajectory", uses: { trajectory: "setpoints" } },
+    { mode: "Body rates", uses: { twist: "angular rates", thrust: "collective thrust" } },
+  ]}
+  footnote="Every mode except hover and body rates also carries a yaw. A yaw angle travels in the orientation of the pose and a yaw speed in twist.angular.z."
+  caption="What each control mode reads from the motion references, as sent by the motion reference handlers."
+/>
+
+You rarely publish them by hand. Behaviors publish them for you, and the motion reference handlers
+in `as2_motion_reference_handlers` set the control mode and publish the right topics in one call.
+[Motion controller](/docs/concepts/motion-controller) explains the control modes.
+
+### Actuator commands
+
+Actuator commands are what the motion controller sends to the platform, on the `pose`, `twist`,
+`thrust` and `trajectory` topics. Their meaning depends on the control mode the platform accepts,
+which varies from drone to drone. One platform may take speed commands while another only takes
+body rates and thrust. The controller asks the platform which control modes it supports and sends commands in one
+of them.
+
+<ModeMatrix
+  prefix="actuator_command/"
+  topics={["pose", "twist", "trajectory", "thrust"]}
+  rows={[
+    { mode: "Hover", none: "No topics. The platform holds its position." },
+    { mode: "Position", uses: { pose: "position", twist: "velocity" } },
+    { mode: "Speed", uses: { twist: "velocity" } },
+    { mode: "Trajectory", uses: { trajectory: "setpoint" } },
+    { mode: "Body rates", uses: { twist: "angular rates", thrust: "collective thrust" } },
+  ]}
+  footnote="Every mode except hover and body rates also carries a yaw. A yaw angle travels in the orientation of the pose and a yaw speed in twist.angular.z."
+  caption="What the multirotor simulator platform reads in each mode. Other platforms support a subset of these modes."
+/>
+
+### Sensor measurements
+
+Each sensor publishes on its own topic under `sensor_measurements/`, such as `odom`, `imu`, `gps`,
+`camera`, `lidar` or `battery`. Platforms publish the sensors built into the drone, and drivers publish extra ones such as
+a RealSense camera. Simulators also publish the true pose of the drone on `ground_truth/pose` and
+`ground_truth/twist`.
+
+### Self localization
+
+The state estimator publishes where the drone is on `self_localization/pose` and how fast it moves on
+`self_localization/twist`. It also publishes the TF tree that relates the drone to the world. Reading
+the pose from TF is preferred, because TF can give it in any frame.
+
+### Platform status
+
+The platform publishes `platform/info`, which says whether it's connected, armed and in offboard
+mode, which control mode it's in, and where its state machine is, such as landed, flying or
+landing.
+Missions and user interfaces read it; the behavior tree's `IsFlying` condition, for example, checks
+it. The take-off and land behaviors move the state machine forward by sending it events.
+[Aerial platform](/docs/concepts/aerial-platform) describes the state machine.
+
+<PlatformInfoCard />
+
+### Alerts
+
+`alert_event` carries emergencies for one drone. The platform acts on two of them. A kill switch
+cuts the motors and an emergency hover stops the drone in place, and both put the platform in its
+emergency state. The Python API can send any alert, and the RViz teleoperation panel can send a kill
+switch.
+
+<Callout type="warn" title="Three alerts aren't acted on yet">
+  Emergency land, force hover and force land are defined in the message, and the Python API has
+  methods that send them, but nothing in Aerostack2 reacts to them yet. Don't rely on them to bring
+  a drone down. A behavior tree can react to any alert with the `WaitForAlert` decorator.
+</Callout>
+
+<AlertScale />
+
+## Frames and timestamps
+
+Every motion reference carries a frame ID and a timestamp in its header. The motion controller uses
+the TF tree to convert a reference from its frame into the one it controls in, so a mission can give
+a point in the world frame or relative to the drone. Pose topics use the shared `earth` frame and
+twist topics use the drone's `base_link` frame. [Frames](/docs/concepts/frames) explains the frame tree.

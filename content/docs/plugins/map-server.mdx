@@ -1,0 +1,95 @@
+---
+title: Map server
+description: Build a 2D occupancy grid from a lidar scan, a depth camera or a point cloud.
+icon: Map
+---
+
+The map server builds a 2D occupancy grid of the world from the drone's sensors, for the
+[path planner](/docs/plugins/path-planning) to plan on. Its plugin turns a laser scan into the grid,
+and two launch presets add a converter in front of it for depth cameras and point clouds.
+
+| `plugin_name` | Builds the map from |
+| --- | --- |
+| `scan2occ_grid` | A laser scan on `sensor_measurements/lidar/scan` |
+| `depth2occ_grid` | A depth image, converted to a scan first |
+| `point_cloud2occ_grid` | A point cloud, converted to a scan first |
+
+Every option publishes the same two grids in the drone's namespace:
+
+| Topic | Contents | Used by |
+| --- | --- | --- |
+| `map` | The grid as measured | The `a_star` planner |
+| `map_filtered` | The grid with small specks inside free space cleared. Confirmed obstacles are kept | The `voronoi` planner |
+
+The map server needs the transform from `earth` to the sensor's frame, so the state estimator has to
+be running. Scans whose transform isn't available in time are dropped.
+
+## Running it
+
+```bash
+ros2 launch as2_map_server map_server.launch.py \
+  namespace:=drone0 \
+  plugin_name:=scan2occ_grid
+```
+
+Each option has its default configuration in the package. A file given as `plugin_config_file` is
+merged over it, so it only needs the values you change. Each value can also be passed as a launch
+argument, such as `map_width:=600`. Start the node through these launch files, since it has no usable
+defaults of its own for the size, the resolution and the range.
+
+## Scan to occupancy grid
+
+`scan2occ_grid` traces every ray of the scan in the `earth` frame. Values go from 0 for free to 100
+for occupied, with -1 for cells never seen:
+
+- The first ray through an unknown cell marks it free, at 0.
+- Each later ray through a cell removes `miss_confidence`.
+- Each hit adds `hit_confidence`. With the defaults, one hit takes a cell to about 40 and three
+  hits take it to 100.
+- A cell that goes above 80 stays occupied for good.
+
+Ranges beyond `scan_range_max`, and readings with no return, are cut to that length and count as
+free space.
+
+The grid has a fixed size, centered on the origin of `earth`, and doesn't follow the drone. Hits
+outside it are dropped, and the planner can't plan to a goal outside it, so make it large enough for
+the whole flight area. Heights are ignored, since the grid is 2D.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `map_resolution` | 0.1 | The size of a cell, in meters |
+| `map_width` | 300 | The width of the grid, in cells |
+| `map_height` | 300 | The height of the grid, in cells |
+| `scan_range_max` | 30.0 | Longer ranges are cut to this length, in meters |
+| `hit_confidence` | 40 | How much a hit adds to a cell |
+| `miss_confidence` | 10 | How much a ray passing through removes from a cell |
+
+The defaults give a 30 by 30 m map, 15 m to each side of the origin.
+
+## Depth camera and point cloud
+
+`depth2occ_grid` and `point_cloud2occ_grid` are launch presets, not separate plugins. Each starts a
+ROS converter that turns its input into a laser scan on `sensor_measurements/lidar/scan`. It then
+starts the map server with `scan2occ_grid`.
+
+| Preset | Converter | Input topics, as launch arguments |
+| --- | --- | --- |
+| `depth2occ_grid` | [depthimage_to_laserscan](https://github.com/ros-perception/depthimage_to_laserscan) | `depth_topic_in`, default `sensor_measurements/front_camera/depth`, and `depth_camera_info_topic_in`, default `sensor_measurements/front_camera/camera_info` |
+| `point_cloud2occ_grid` | [pointcloud_to_laserscan](https://github.com/ros-perception/pointcloud_to_laserscan) | `cloud_topic_in`, default `sensor_measurements/lidar/cloud` |
+
+Set the input topics on the launch line, since they aren't read from the configuration file:
+
+```bash
+ros2 launch as2_map_server map_server.launch.py \
+  namespace:=drone0 \
+  plugin_name:=point_cloud2occ_grid \
+  cloud_topic_in:=sensor_measurements/lidar_3d/points
+```
+
+The configuration file holds the converter's parameters next to the `scan2occ_grid` ones. Both
+converters cut ranges at 10 m by default. The point cloud preset keeps points between
+`min_height` 0.0 and `max_height` 1.0, measured in the cloud's own frame rather than above the
+ground.
+
+The default depth camera configuration sets the scan's frame to `drone0/front_camera/rgbd_camera`.
+For another drone or camera, set `output_frame` in your own file.
