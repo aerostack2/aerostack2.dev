@@ -1,4 +1,4 @@
-import { projectRepo } from "@/lib/shared";
+import { gitConfig, projectRepo } from "@/lib/shared";
 
 /**
  * GitHub data for the home page, refreshed once a day: the repository's
@@ -117,6 +117,47 @@ export async function getCommunity(): Promise<Community> {
     };
   } catch {
     return { contributors: [], repos: 0 };
+  }
+}
+
+type GitHubCommit = {
+  author: { login: string; avatar_url: string; type: string } | null;
+};
+
+/**
+ * Everyone who has committed to a docs page, the most commits first, from
+ * the site repository's history on GitHub. `path` is relative to
+ * `content/docs`.
+ *
+ * Commits whose email isn't linked to a GitHub account have no author and are
+ * left out, as are bots. GitHub doesn't follow renames, so a moved page only
+ * credits commits made since the move. On any failure it gives back nothing
+ * and the page shows no avatars.
+ */
+export async function getPageContributors(
+  path: string,
+): Promise<Contributor[]> {
+  try {
+    const commits = await github<GitHubCommit[]>(
+      `repos/${gitConfig.user}/${gitConfig.repo}/commits?path=${encodeURIComponent(`content/docs/${path}`)}&per_page=100`,
+    );
+    const people = new Map<string, Contributor>();
+    for (const { author } of commits) {
+      if (author?.type !== "User" || skip.has(author.login)) continue;
+      const seen = people.get(author.login);
+      if (seen) seen.contributions += 1;
+      else
+        people.set(author.login, {
+          login: author.login,
+          avatar: author.avatar_url,
+          contributions: 1,
+        });
+    }
+    return [...people.values()].sort(
+      (a, b) => b.contributions - a.contributions,
+    );
+  } catch {
+    return [];
   }
 }
 

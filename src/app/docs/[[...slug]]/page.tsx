@@ -10,6 +10,7 @@ import { createRelativeLink } from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/components/mdx";
+import { PageContributors } from "@/components/page-contributors";
 import { gitConfig } from "@/lib/shared";
 import {
   getPageImageUrl,
@@ -35,9 +36,25 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
     day: "numeric",
     timeZone: "UTC",
   });
+  const lastUpdatedNote = lastUpdated && (
+    <p className="text-xs text-fd-muted-foreground">
+      Last updated on {lastUpdated}
+    </p>
+  );
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
+    <DocsPage
+      toc={page.data.toc}
+      full={page.data.full}
+      // Ruled off under the TOC entries, like the sidebar's footer.
+      tableOfContent={{
+        footer: lastUpdatedNote && (
+          <div className="mt-2 border-t border-fd-border pt-3">
+            {lastUpdatedNote}
+          </div>
+        ),
+      }}
+    >
       {/* Same label style as the home page's section labels. */}
       <p className="flex items-center gap-3 font-mono text-xs tracking-widest text-fd-muted-foreground uppercase">
         <span className="text-fd-primary">Docs</span>
@@ -60,6 +77,10 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
           markdownUrl={markdownUrl}
           githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
         />
+        {/* `ms-auto` pushes the contributors to the far end of the row. */}
+        <div className="ms-auto">
+          <PageContributors path={page.path} />
+        </div>
       </div>
       <DocsBody>
         <MDX
@@ -69,11 +90,9 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
           })}
         />
       </DocsBody>
-      {lastUpdated && (
-        <p className="text-sm text-fd-muted-foreground">
-          Last updated on {lastUpdated}
-        </p>
-      )}
+      {/* The TOC is hidden below `xl`, so the date falls back to the foot of
+          the page there. */}
+      {lastUpdatedNote && <div className="xl:hidden">{lastUpdatedNote}</div>}
     </DocsPage>
   );
 }
