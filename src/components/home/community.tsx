@@ -50,8 +50,8 @@ export async function Community() {
         <div className="flex flex-col p-6 sm:p-12">
           <Heading className="text-fd-primary">Open source</Heading>
           <p className="mt-4 max-w-sm text-fd-muted-foreground">
-            {appName} is maintained by CVAR-UPM and built in the open by its
-            community on GitHub.
+            {appName} is built in the open on GitHub by anyone who wants to
+            take part, with strong support from CVAR-UPM.
           </p>
 
           {figures.length > 0 && (
