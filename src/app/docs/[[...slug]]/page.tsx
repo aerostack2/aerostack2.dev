@@ -46,6 +46,8 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
     <DocsPage
       toc={page.data.toc}
       full={page.data.full}
+      // The section label below already names the section.
+      breadcrumb={{ enabled: false }}
       // Ruled off under the TOC entries, like the sidebar's footer.
       tableOfContent={{
         // The TOC's grid area also covers the right gutter past the layout
