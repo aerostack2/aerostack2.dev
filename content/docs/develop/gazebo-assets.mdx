@@ -1,9 +1,560 @@
 ---
 title: Gazebo Assets
+description: Add a world, an object and a drone model to the Gazebo simulation from your own project, and a new sensor to as2_gazebo_assets.
 icon: Boxes
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/adding_gazebo_assets.rst` and
-  `docs/_09_development/_develop_guide/_develop_guide/_create_gazebo_assets.rst`.
+`as2_gazebo_assets` builds the [Gazebo simulation](/docs/aerial-platforms/gazebo-simulation) from a
+configuration file, and finds every world and model in it by name. Worlds, objects and drone models
+can live in your own project, so adding them doesn't change Aerostack2. Sensors are the exception,
+since the package keeps the list of sensor types and the topics each one bridges.
+
+This guide builds a world with a landing pad and a slower variant of the stock quadrotor, all in a
+project folder, and flies the drone onto the pad. Then it adds a new camera to the package itself.
+
+## Before you start
+
+- **The Gazebo simulation running.** [Gazebo](/docs/aerial-platforms/gazebo-simulation) shows how to
+  launch it and fly a drone in it.
+- **Some SDF.** The models are [SDFormat](http://sdformat.org) files, and the world and drone files
+  are [Jinja](https://jinja.palletsprojects.com) templates around SDF.
+
+## How assets are found
+
+Each entry in the configuration file names an asset, and the launch looks for its file first in the
+package's `worlds` or `models` folder, then in every folder on `GZ_SIM_RESOURCE_PATH`.
+
+| In the configuration | File it looks for |
+| --- | --- |
+| `world_name` | `<world_name>.sdf.jinja`, or else `<world_name>.sdf`, directly in a folder |
+| A drone's `model_type` | `<model_type>/<model_type>.sdf.jinja` |
+| An object's `model_type` | `<model_type>/<model_type>.sdf` |
+| A payload's `model_type` | Nothing. The drone's template draws it, and the type must be one the package knows |
+
+Worlds and drones are templates. The launch renders them into `/tmp/<world_name>.sdf` and
+`/tmp/<model_type>_<index>.sdf`, then starts Gazebo with the world and spawns each drone and object
+into it. A world template receives the `origin` from the configuration. A drone template receives
+its namespace, its payload, its battery and which controller to enable.
+
+Drone types are checked against a fixed list, so a new one also goes in `AS2_EXTRA_DRONE_MODELS`, a
+list of names separated by colons. Payload types are fixed in the package and have no such variable.
+
+## Add assets from your project
+
+<Steps>
+<Step>
+
+### Create the folders
+
+```bash
+mkdir -p my_project/worlds my_project/models/landing_pad my_project/models/slow_quadrotor my_project/config
+cd my_project
+```
+
+By the end of the guide the project holds these files:
+
+<FileTree>
+  <TreeFolder name="my_project">
+    <TreeFolder name="worlds">
+      <TreeFile name="pad_world.sdf.jinja" note="The world" />
+    </TreeFolder>
+    <TreeFolder name="models">
+      <TreeFolder name="landing_pad">
+        <TreeFile name="model.config" />
+        <TreeFile name="landing_pad.sdf" note="An object that publishes its pose" />
+      </TreeFolder>
+      <TreeFolder name="slow_quadrotor">
+        <TreeFile name="slow_quadrotor.sdf.jinja" note="A drone model" />
+      </TreeFolder>
+    </TreeFolder>
+    <TreeFolder name="config">
+      <TreeFile name="world.yaml" note="What the simulation spawns" />
+      <TreeFile name="config.yaml" note="The drone's stack" />
+      <TreeFile name="pid_speed_controller.yaml" note="The controller's gains" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Step>
+<Step>
+
+### Make the world
+
+Start from the package's empty world, which already has what Aerostack2 needs:
+
+```bash
+cp $(ros2 pkg prefix as2_gazebo_assets)/share/as2_gazebo_assets/worlds/empty.sdf.jinja \
+  worlds/pad_world.sdf.jinja
+```
+
+Then rename the world inside it, so its name matches the file:
+
+```xml title="worlds/pad_world.sdf.jinja"
+<world name="pad_world">
+```
+
+Every bridge builds its Gazebo topic from `world_name`, like `/world/pad_world/model/...`, so a
+world whose name differs from its file spawns nothing.
+
+The template keeps four systems that the drones rely on. Physics moves them, user commands serve
+the service that spawns them, the scene broadcaster feeds the Gazebo window, and the sensors system
+renders cameras and lidars. Its `spherical_coordinates` block only appears when the configuration
+has an `origin`, which GPS needs.
+Fixed scenery goes in the world too, as an `<include>` of a model like the `ground_plane` it already
+has.
+
+</Step>
+<Step>
+
+### Add an object
+
+An object is a model that the configuration spawns and that can bridge topics to ROS 2. The
+landing pad publishes its pose:
+
+```xml title="models/landing_pad/landing_pad.sdf"
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="landing_pad">
+    <link name="pad">
+      <pose>0 0 0.025 0 0 0</pose>
+      <inertial>
+        <mass>5.0</mass>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <cylinder>
+            <radius>0.5</radius>
+            <length>0.05</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <cylinder>
+            <radius>0.5</radius>
+            <length>0.05</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <diffuse>1.0 0.5 0.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Publishes the pad's pose on /model/<name>/pose, for the pose bridge -->
+    <plugin
+      filename="ignition-gazebo-pose-publisher-system"
+      name="ignition::gazebo::systems::PosePublisher">
+      <publish_model_pose>true</publish_model_pose>
+      <publish_link_pose>false</publish_link_pose>
+      <publish_nested_model_pose>true</publish_nested_model_pose>
+      <use_pose_vector_msg>false</use_pose_vector_msg>
+      <update_frequency>10</update_frequency>
+    </plugin>
+  </model>
+</sdf>
+```
+
+```xml title="models/landing_pad/model.config"
+<?xml version="1.0"?>
+<model>
+  <name>Landing pad</name>
+  <version>1.0</version>
+  <sdf version="1.9">landing_pad.sdf</sdf>
+  <description>A round landing pad that publishes its pose.</description>
+</model>
+```
+
+An object's `object_bridges` list picks the topics it bridges.
+
+| Bridge | Topic | Needs in the model |
+| --- | --- | --- |
+| `pose` | `/<model_name>/<model_name>/pose`, as `geometry_msgs/PoseStamped` | A pose publisher that sends single poses |
+| `gps` | `/<model_name>/sensor_measurements/gps`, as `sensor_msgs/NavSatFix` | A nested model named `gps` with a navsat sensor, such as an include of `model://gps` |
+
+An object's `joints` list also bridges a velocity command for each joint, on
+`/gz/<model_name>/joint/<joint>/cmd_vel`, and `tf_broadcaster: true` publishes its pose on TF
+relative to `earth`.
+
+</Step>
+<Step>
+
+### Add a drone model
+
+A drone model is a template. Copy the stock quadrotor's:
+
+```bash
+cp $(ros2 pkg prefix as2_gazebo_assets)/share/as2_gazebo_assets/models/quadrotor_base/quadrotor_base.sdf.jinja \
+  models/slow_quadrotor/slow_quadrotor.sdf.jinja
+```
+
+This variant only flies slower. In its velocity controller, lower the top speed from 5 to 1 m/s:
+
+```xml title="models/slow_quadrotor/slow_quadrotor.sdf.jinja"
+<maximumLinearVelocity>1 1 1</maximumLinearVelocity>
+```
+
+Each part of the template ties the model to Aerostack2:
+
+- `<model name='{{ namespace }}'>` names the model after the drone, which is also its namespace.
+- The `<include merge="true">` of `model://quadrotor_base` brings in the body, rotors and meshes, so
+  the template only adds plugins. A model of your own replaces that file. Its body link has to be
+  `base_link`, and each rotor needs a joint named after it with `_joint` at the end.
+- The pose publisher sends the drone's links and sensors to TF.
+- The motor models and the velocity controller listen under `model/{{ namespace }}`, where the
+  bridges send `cmd_vel` and the arming command. The velocity controller only appears when the
+  drone's `enable_velocity_control` is on, which is the default, and the acro controller when
+  `enable_acro_control` is.
+- The `for sensor in sensors` loop draws the payload. Sensors with a template of their own, like the
+  cameras, are included from it. The rest come in as `model://<type>` with a fixed joint to
+  `base_link`.
+
+Drone models outside the package also need their name in `AS2_EXTRA_DRONE_MODELS`, which a later
+step sets.
+
+<Callout type="warn" title="Sensor templates must sit next to the drone">
+  The drone's template includes sensor templates from its own models folder. For a drone in your
+  project, the stock cameras, gimbals and suction gripper aren't found there, and the drone fails to
+  render. Copy the template of each one you use, like `hd_camera/hd_camera.sdf.jinja`, into your
+  `models` folder. GPS, lidars, air pressure and the magnetometer need nothing, since they come in
+  as `model://`.
 </Callout>
+
+</Step>
+<Step>
+
+### Describe the simulation
+
+The configuration file puts the drone, its payload and the pad in the new world:
+
+```yaml title="config/world.yaml"
+world_name: "pad_world"
+origin:
+  latitude: 40.4405287
+  longitude: -3.6898277
+  altitude: 100.0
+drones:
+  - model_type: "slow_quadrotor"
+    model_name: "drone0"
+    xyz: [0.0, 0.0, 0.3]
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+objects:
+  - model_type: "landing_pad"
+    model_name: "pad"
+    xyz: [3.0, 0.0, 0.0]
+    object_bridges: ["pose"]
+```
+
+The same file in JSON works too. [Gazebo](/docs/aerial-platforms/gazebo-simulation#the-world-file)
+lists every field and stock model.
+
+</Step>
+<Step>
+
+### Point Gazebo at the folders
+
+In every terminal that launches the simulation or the platform, add both folders to Gazebo's path
+and register the drone model:
+
+```bash
+export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:$PWD/worlds:$PWD/models
+export AS2_EXTRA_DRONE_MODELS=slow_quadrotor
+```
+
+Sourcing Aerostack2, or `pixi run` and `pixi shell`, put the package's own folders at the front, so
+the stock assets keep their names.
+
+</Step>
+<Step>
+
+### Launch it
+
+Start the simulation, then the platform, which creates the drone's bridges:
+
+```bash
+ros2 launch as2_gazebo_assets launch_simulation.py \
+  simulation_config_file:=config/world.yaml
+
+ros2 launch as2_platform_gazebo platform_gazebo_launch.py \
+  namespace:=drone0 simulation_config_file:=config/world.yaml
+```
+
+The pad's pose arrives on ROS 2, in the world's frame:
+
+```bash
+ros2 topic echo --once /pad/pad/pose
+```
+
+```console noCopy
+header:
+  stamp:
+    sec: 83
+    nanosec: 100000000
+  frame_id: pad_world
+pose:
+  position:
+    x: 3.0
+    y: -9.582009233869264e-20
+    z: -8.178440423674271e-07
+```
+
+The drone has its GPS on `/drone0/sensor_measurements/gps`, next to the IMU and the ground truth that
+every Gazebo drone publishes.
+
+</Step>
+<Step>
+
+### Land on the pad
+
+Start the rest of the stack with the ground truth estimator. Gazebo roots each drone's TF tree at
+the bare namespace, so the base frame is an empty name:
+
+```yaml title="config/config.yaml"
+/**:
+  ros__parameters:
+    use_sim_time: true
+  state_estimator:
+    ros__parameters:
+      base_frame_id: ""
+      plugin_name: "ground_truth"
+      ground_truth:
+        twist_sub_topic: "ground_truth/twist"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_position"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_speed"
+  GoToBehavior:
+    ros__parameters:
+      go_to_plugin_name: "go_to_plugin_position"
+  FollowPathBehavior:
+    ros__parameters:
+      follow_path_plugin_name: "follow_path_plugin_position"
+```
+
+```bash
+ros2 launch as2_state_estimator state_estimator_launch.py \
+  namespace:=drone0 use_sim_time:=true config_file:=config/config.yaml
+
+ros2 launch as2_motion_controller controller_launch.py \
+  namespace:=drone0 use_sim_time:=true plugin_name:=pid_speed_controller \
+  plugin_config_file:=config/pid_speed_controller.yaml
+
+ros2 launch as2_behaviors_motion motion_behaviors_launch.py \
+  namespace:=drone0 config_file:=config/config.yaml
+```
+
+The controller's gains are the ones from the
+[motion controller plugins](/docs/plugins/motion-controller#running-it). Then fly to the pad and
+land on it:
+
+```python title="land_on_pad.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id='drone0', use_sim_time=True)
+drone.arm()
+drone.offboard()
+print('takeoff', drone.takeoff(height=1.0, speed=0.5))
+print('go_to', drone.go_to(3.0, 0.0, 1.0, speed=2.0))
+print('land', drone.land(speed=0.3))
+print('at', [round(v, 2) for v in drone.position])
+drone.manual()
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```console noCopy
+takeoff True
+go_to True
+land True
+at [3.06, -0.01, 0.05]
+```
+
+The drone ends 5 cm up, on top of the pad. On the way it was asked for 2 m/s and stayed under
+1 m/s, where the stock quadrotor reaches about 1.5 m/s over the same 3 m.
+
+</Step>
+</Steps>
+
+<Callout type="warn" title="A template error doesn't stop the launch">
+  When a drone's template fails to render, the launch prints the Jinja error and carries on. Gazebo
+  then spawns whatever is left at `/tmp/<model_type>_<index>.sdf` from an earlier run, or nothing.
+  Check the log for the error after changing a template.
+</Callout>
+
+## Add a sensor to as2_gazebo_assets
+
+A sensor of a new kind needs changes in the package, because the package decides which payload
+types exist and which topics each one bridges. This part adds `wide_camera`, a camera with a
+120° lens, in a [source checkout](/docs/develop/setting-code).
+
+<Steps>
+<Step>
+
+### Write the sensor's template
+
+Cameras are templates, so the same file works fixed to the drone or on a gimbal. Copy
+`models/hd_camera` to `models/wide_camera` and set the lens:
+
+```xml title="as2_gazebo_assets/models/wide_camera/wide_camera.sdf.jinja"
+{% if sensor.model == 'gimbal_speed' or sensor.model == 'gimbal_position' -%}
+<model name='{{ sensor.sensor_attached }}'>
+{% else -%}
+<model name='{{ sensor.name }}'>
+    <pose relative_to="base_link">{{ sensor.pose }}</pose>
+{% endif -%}
+    <link name="wide_camera">
+        <inertial>
+            <mass>0.005</mass>
+            <inertia>
+                <ixx>8.33e-06</ixx>
+                <iyy>8.33e-06</iyy>
+                <izz>8.33e-06</izz>
+            </inertia>
+        </inertial>
+        <sensor name="wide_camera" type="camera">
+            <always_on>1</always_on>
+            <update_rate>30</update_rate>
+            <camera name="wide_camera">
+                <horizontal_fov>2.0944</horizontal_fov>
+                <lens>
+                    <intrinsics>
+                        <!-- fx = fy = width / (2 * tan(hfov / 2)) -->
+                        <fx>184.75</fx>
+                        <fy>184.75</fy>
+                        <!-- cx = (width + 1) / 2, cy = (height + 1) / 2 -->
+                        <cx>320.5</cx>
+                        <cy>240.5</cy>
+                        <s>0</s>
+                    </intrinsics>
+                </lens>
+                <image>
+                    <width>640</width>
+                    <height>480</height>
+                    <format>R8G8B8</format>
+                </image>
+                <clip>
+                    <near>0.05</near>
+                    <far>100</far>
+                </clip>
+{% if sensor.model == 'gimbal_speed' or sensor.model == 'gimbal_position' -%}
+                <optical_frame_id>/{{ namespace }}/{{ sensor.name }}/_0/_1/_2/{{ sensor.sensor_attached }}/{{ sensor.sensor_attached_type }}/optical_frame</optical_frame_id>
+{% else -%}
+                <optical_frame_id>/{{ namespace }}/{{ sensor.name }}/{{ sensor.model }}/optical_frame</optical_frame_id>
+{% endif -%}
+            </camera>
+        </sensor>
+    </link>
+    <frame name="mount_point"/>
+</model>
+{% if sensor.model != 'gimbal_speed' and sensor.model != 'gimbal_position' -%}
+<joint name="{{ sensor.name }}_joint" type="fixed">
+    <parent>base_link</parent>
+    <child>{{ sensor.name }}</child>
+</joint>
+{% endif -%}
+```
+
+The link and the sensor are both named after the type. The camera bridge looks for the image on
+`/world/<world>/model/<drone>/model/<name>/link/<type>/sensor/<type>/image`, so any other name
+leaves the topic empty. Keep the `model.config` from the copy, with its name changed.
+
+</Step>
+<Step>
+
+### Register the type
+
+Add the type to the camera types in `src/as2_gazebo_assets/models/payload.py`:
+
+```python title="as2_gazebo_assets/src/as2_gazebo_assets/models/payload.py"
+class CameraTypeEnum(str, Enum):
+    """Valid camera model types."""
+
+    VGA_CAM = 'vga_camera'
+    HD_CAM = 'hd_camera'
+    SEMANTIC_CAM = 'semantic_camera'
+    GRAYSCALE_CAM = 'grayscale_camera'
+    WIDE_CAM = 'wide_camera'
+```
+
+Each class there is one kind of sensor. Its `bridges` method lists the topics to bridge, built with
+the functions in `src/as2_gazebo_assets/bridges/bridges.py`, and `nodes` adds custom bridge nodes,
+like the static transform of a camera. A new camera type uses the camera's, so it bridges
+`image_raw` and `camera_info` under `sensor_measurements/<name>/`. A sensor of a kind the package doesn't have yet
+gets a class of its own, which also goes in the `model_type` list of the `Payload` class at the end
+of the file.
+
+</Step>
+<Step>
+
+### Include it in the drones
+
+Each drone template picks the sensor templates it knows by name. Add the new camera before the
+gimbaled branch in every drone that should carry it, starting with
+`models/quadrotor_base/quadrotor_base.sdf.jinja`:
+
+```jinja title="as2_gazebo_assets/models/quadrotor_base/quadrotor_base.sdf.jinja"
+{% elif sensor.model == 'wide_camera' and not sensor.gimbaled -%}
+
+    {% include 'wide_camera/wide_camera.sdf.jinja' with context %}
+
+{% elif sensor.gimbaled -%}
+```
+
+To mount it on a gimbal, add the same include to `models/gimbal/speed_gimbal.sdf.jinja` and
+`position_gimbal.sdf.jinja`, under the check on `sensor.sensor_attached_type`.
+
+</Step>
+<Step>
+
+### Build and try it
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+```bash
+as2 build as2_gazebo_assets
+```
+
+</Tab>
+<Tab value="Pixi">
+
+```bash
+pixi install
+```
+
+[Developing with Pixi](/docs/develop/pixi-development) explains how the workspace rebuilds the
+packages you change.
+
+</Tab>
+</Tabs>
+
+Give a drone the camera, pointing down:
+
+```yaml title="config/world.yaml"
+payload:
+  - model_type: "wide_camera"
+    model_name: "down_camera"
+    xyz: [0.0, 0.0, -0.05]
+    rpy: [0.0, 1.5708, 0.0]
+```
+
+The platform then bridges `/drone0/sensor_measurements/down_camera/image_raw` and
+`/drone0/sensor_measurements/down_camera/camera_info`. Run the package's tests with
+`as2 test -v as2_gazebo_assets`, and add a case for the new type to
+`src/as2_gazebo_assets/tests/test_models.py`.
+
+</Step>
+</Steps>
+
+## Next steps
+
+<Cards>
+  <Card title="Gazebo" href="/docs/aerial-platforms/gazebo-simulation" description="Launch the simulation, its configuration file and the stock models." />
+  <Card title="Opening a pull request" href="/docs/develop/pull-requests" description="Contribute your new sensor or model back." />
+</Cards>

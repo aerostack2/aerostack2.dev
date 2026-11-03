@@ -1,8 +1,531 @@
 ---
 title: Follow Reference Plugin
+description: Write a plugin that changes how the follow reference behavior chases its target, and fly it.
 icon: Crosshair
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/follow_reference_plugin.rst`.
+The [follow reference behavior](/docs/plugins/motion-behaviors#follow-reference) chases a point that
+can move, given in any frame of the TF tree. The behavior handles the action, checks the goal and
+tracks the drone's state, and a plugin decides how the drone moves. This guide builds
+`follow_reference_plugin_speed`, which flies towards the target with speed commands, faster the
+farther it is.
+
+## Before you start
+
+- **A workspace to build in.** Either a colcon workspace with Aerostack2, from
+  [Installation](/docs/getting-started/installation), or a Pixi workspace like the one in
+  [Your project with Pixi](/docs/develop/pixi-project).
+- **A drone to fly.** The simulated drone from the [Quickstart](/docs/getting-started/quickstart) is
+  enough.
+- **Behaviors.** [Writing a behavior](/docs/develop/behavior) explains the behavior server that
+  the follow reference behavior is built on.
+
+## How the plugin is loaded
+
+The behavior reads its `plugin_name` parameter, adds `::Plugin` to it and asks pluginlib for that
+class. pluginlib looks for it in every package that registers plugins for `as2_behaviors_motion`.
+So the plugin is a class called `Plugin`, in a namespace named like the plugin, and it inherits from
+`follow_reference_base::FollowReferenceBase`.
+
+Before the plugin sees anything, the behavior does the common work:
+
+- It subscribes to `self_localization/twist` and `platform/info`, and keeps the drone's pose in
+  `earth` and the platform's state.
+- It rejects a goal whose target frame is empty or isn't in the TF tree, or that arrives while the
+  drone isn't flying or has no localization yet.
+- It replaces a speed limit of 0 in the goal with the matching `follow_reference_max_speed_*`
+  parameter.
+- It stores the goal once the plugin accepts it, and fills the feedback with the distance to the
+  target and the drone's speed.
+
+## The plugin contract
+
+The plugin overrides these methods:
+
+| Method | Must override | Called when |
+| --- | --- | --- |
+| `ownInit()` | No | Once, when the plugin is loaded. Create handlers and read parameters here |
+| `own_activate(goal)` | Yes | A goal passed the checks. Return `false` to reject it |
+| `own_modify(goal)` | No | The goal changes while running. The default refuses |
+| `own_pause(message)`, `own_resume(message)` | No | The behavior is paused or resumed. The defaults refuse |
+| `own_deactivate(message)` | Yes | The behavior is stopped. Leave the drone safe and return `true` |
+| `own_run()` | Yes | On every cycle. Send the next reference and return `RUNNING` |
+| `own_execution_end(state)` | Yes | The goal ends, for any reason |
+
+`goal` is a copy the plugin can change. The position plugin, for example, works out the yaw angle
+there. Whatever `own_activate` or `own_modify` leaves in it becomes the stored goal.
+
+The base gives the plugin these members:
+
+| Member | What it holds |
+| --- | --- |
+| `node_ptr_` | The behavior's node, an `as2::Node`, for logging, parameters and handlers |
+| `tf_handler_` | A shared `as2::tf::TfHandler`, to convert the target between frames |
+| `goal_` | The goal being followed |
+| `feedback_`, `result_` | Sent to the client on every cycle |
+| `actual_pose_` | The drone's latest pose, in `earth` |
+| `platform_state_` | The platform's latest state |
+| `params_` | The three `follow_reference_max_speed_*` values |
+| `sendHover()` | A helper that makes the drone hover |
+
+Follow reference never ends on its own. `own_run` returns `RUNNING` until the goal is stopped, and
+`FAILURE` only when something breaks.
+
+## Write the plugin
+
+<Steps>
+<Step>
+
+### Create the package
+
+Make the package's folders in your workspace. With colcon, that's `~/aerostack2_ws/src`. With
+Pixi, it's the workspace folder.
+
+```bash
+mkdir -p follow_reference_plugin_speed/{config,src}
+```
+
+By the end of the guide it holds these files:
+
+<FileTree>
+  <TreeFolder name="follow_reference_plugin_speed">
+    <TreeFile name="CMakeLists.txt" />
+    <TreeFile name="package.xml" />
+    <TreeFile name="pixi.toml" note="Only with Pixi" />
+    <TreeFile name="plugins.xml" note="Registers the plugin with pluginlib" />
+    <TreeFolder name="config">
+      <TreeFile name="follow_reference_plugin_speed.yaml" note="The behavior's parameters" />
+    </TreeFolder>
+    <TreeFolder name="src">
+      <TreeFile name="follow_reference_plugin_speed.cpp" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Step>
+<Step>
+
+### Write the plugin
+
+```cpp title="follow_reference_plugin_speed/src/follow_reference_plugin_speed.cpp"
+#include <algorithm>
+#include <memory>
+#include <string>
+
+#include <as2_core/utils/frame_utils.hpp>
+#include <as2_motion_reference_handlers/speed_motion.hpp>
+#include <as2_msgs/msg/yaw_mode.hpp>
+#include <follow_reference_behavior/follow_reference_base.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <pluginlib/class_list_macros.hpp>
+#include <tf2/exceptions.h>
+
+namespace follow_reference_plugin_speed
+{
+
+class Plugin : public follow_reference_base::FollowReferenceBase
+{
+public:
+  void ownInit() override
+  {
+    speed_handler_ = std::make_shared<as2::motionReferenceHandlers::SpeedMotion>(node_ptr_);
+    gain_ = node_ptr_->getParameter<double>("follow_reference_plugin_speed.gain", 1.0);
+  }
+
+  bool own_activate(as2_msgs::action::FollowReference::Goal & goal) override
+  {
+    return check_yaw_mode(goal);
+  }
+
+  bool own_modify(as2_msgs::action::FollowReference::Goal & goal) override
+  {
+    return check_yaw_mode(goal);
+  }
+
+  bool own_deactivate(const std::shared_ptr<std::string> & message) override
+  {
+    sendHover();
+    *message = "Follow reference stopped";
+    return true;
+  }
+
+  bool own_pause(const std::shared_ptr<std::string> & message) override
+  {
+    sendHover();
+    *message = "Follow reference paused";
+    return true;
+  }
+
+  bool own_resume(const std::shared_ptr<std::string> & /*message*/) override
+  {
+    return true;
+  }
+
+  void own_execution_end(const as2_behavior::ExecutionStatus & /*state*/) override
+  {
+    sendHover();
+  }
+
+  as2_behavior::ExecutionStatus own_run() override
+  {
+    // The target can be in any frame, and that frame can move, so convert it on every cycle
+    geometry_msgs::msg::PointStamped target = goal_.target_pose;
+    target.header.stamp = node_ptr_->now();
+    try {
+      target = tf_handler_->convert(target, node_ptr_->getEarthFrameId());
+    } catch (const tf2::TransformException & ex) {
+      RCLCPP_WARN_THROTTLE(
+        node_ptr_->get_logger(), *node_ptr_->get_clock(), 2000,
+        "Can't find the target: %s", ex.what());
+      return as2_behavior::ExecutionStatus::RUNNING;
+    }
+
+    // Fly towards the target, faster the farther it is, within the goal's limits
+    const auto & position = actual_pose_.pose.position;
+    const float vx = clamp(gain_ * (target.point.x - position.x), goal_.max_speed_x);
+    const float vy = clamp(gain_ * (target.point.y - position.y), goal_.max_speed_y);
+    const float vz = clamp(gain_ * (target.point.z - position.z), goal_.max_speed_z);
+
+    float yaw = goal_.yaw.angle;
+    if (goal_.yaw.mode == as2_msgs::msg::YawMode::KEEP_YAW) {
+      yaw = as2::frame::getYawFromQuaternion(actual_pose_.pose.orientation);
+    }
+
+    if (!speed_handler_->sendSpeedCommandWithYawAngle(
+        node_ptr_->getEarthFrameId(), vx, vy, vz, node_ptr_->getEarthFrameId(), yaw))
+    {
+      result_.follow_reference_success = false;
+      return as2_behavior::ExecutionStatus::FAILURE;
+    }
+    result_.follow_reference_success = true;
+    return as2_behavior::ExecutionStatus::RUNNING;
+  }
+
+private:
+  bool check_yaw_mode(const as2_msgs::action::FollowReference::Goal & goal)
+  {
+    if (goal.yaw.mode != as2_msgs::msg::YawMode::KEEP_YAW &&
+      goal.yaw.mode != as2_msgs::msg::YawMode::FIXED_YAW)
+    {
+      RCLCPP_ERROR(node_ptr_->get_logger(), "Only KEEP_YAW and FIXED_YAW are supported");
+      return false;
+    }
+    return true;
+  }
+
+  static float clamp(double value, double limit)
+  {
+    return static_cast<float>(std::clamp(value, -limit, limit));
+  }
+
+  std::shared_ptr<as2::motionReferenceHandlers::SpeedMotion> speed_handler_;
+  double gain_ = 1.0;
+};
+
+}  // namespace follow_reference_plugin_speed
+
+PLUGINLIB_EXPORT_CLASS(
+  follow_reference_plugin_speed::Plugin, follow_reference_base::FollowReferenceBase)
+```
+
+What each part does:
+
+- **`ownInit`** creates a speed motion reference handler on the behavior's node, and reads the
+  plugin's own parameter. Prefix plugin parameters with the plugin name, so they can't clash with
+  the behavior's.
+- **`own_activate`** and **`own_modify`** only check the yaw mode. The behavior has already checked
+  the rest, and stores the goal once they return `true`. Since `own_run` reads `goal_`, a modify
+  takes effect on the next cycle.
+- **`own_run`** converts the target to `earth` on every cycle, so a target in a moving frame is
+  followed as it moves. A target that can't be found for a moment isn't a failure, so it keeps
+  running.
+- **`own_pause`**, **`own_deactivate`** and **`own_execution_end`** hover.
+
+`PLUGINLIB_EXPORT_CLASS` registers the class with pluginlib, as the base class it implements.
+
+</Step>
+<Step>
+
+### Register the plugin
+
+`plugins.xml` tells pluginlib which library holds the class:
+
+```xml title="follow_reference_plugin_speed/plugins.xml"
+<library path="follow_reference_plugin_speed">
+  <class type="follow_reference_plugin_speed::Plugin"
+         base_class_type="follow_reference_base::FollowReferenceBase">
+    <description>Follow reference with speed commands, proportional to the distance.</description>
+  </class>
+</library>
+```
+
+</Step>
+<Step>
+
+### Describe the package
+
+```xml title="follow_reference_plugin_speed/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>follow_reference_plugin_speed</name>
+  <version>0.1.0</version>
+  <description>A follow reference plugin that chases the target with speed commands.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>pluginlib</depend>
+  <depend>eigen</depend>
+  <depend>tf2</depend>
+  <depend>as2_core</depend>
+  <depend>as2_msgs</depend>
+  <depend>as2_behavior</depend>
+  <depend>as2_behaviors_motion</depend>
+  <depend>as2_motion_reference_handlers</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake title="follow_reference_plugin_speed/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(follow_reference_plugin_speed)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(as2_core REQUIRED)
+find_package(as2_msgs REQUIRED)
+find_package(as2_behavior REQUIRED)
+find_package(as2_behaviors_motion REQUIRED)
+find_package(as2_motion_reference_handlers REQUIRED)
+
+add_library(${PROJECT_NAME} SHARED src/follow_reference_plugin_speed.cpp)
+# The base class is header only, so only its headers are needed
+target_include_directories(${PROJECT_NAME} PRIVATE ${as2_behaviors_motion_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME}
+  pluginlib tf2 as2_core as2_msgs as2_behavior as2_motion_reference_handlers)
+
+install(TARGETS ${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+
+# Register the plugin for the base class that lives in as2_behaviors_motion
+pluginlib_export_plugin_description_file(as2_behaviors_motion plugins.xml)
+
+ament_package()
+```
+
+Two lines matter most:
+
+- **`target_include_directories`** takes only the headers of `as2_behaviors_motion`. The base
+  class is header only, so the plugin doesn't link against the package's library.
+- **`pluginlib_export_plugin_description_file`** names `as2_behaviors_motion`, the package that
+  loads the plugin, not this one. That's how the behavior finds it.
+
+</Step>
+<Step>
+
+### Configure the behavior
+
+The behavior needs its plugin name and the three default speed limits. The plugin's own parameters
+go under its name:
+
+```yaml title="follow_reference_plugin_speed/config/follow_reference_plugin_speed.yaml"
+/**:
+  ros__parameters:
+    plugin_name: "follow_reference_plugin_speed"
+    follow_reference_max_speed_x: 1.0
+    follow_reference_max_speed_y: 1.0
+    follow_reference_max_speed_z: 0.5
+    follow_reference_plugin_speed:
+      gain: 1.0
+```
+
+</Step>
+<Step>
+
+### Build
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+```bash
+cd ~/aerostack2_ws
+colcon build --packages-select follow_reference_plugin_speed
+source install/setup.bash
+```
+
+</Tab>
+<Tab value="Pixi">
+
+Give the package a `pixi.toml`, with a mapping for each Aerostack2 package in its `package.xml`, as
+[Your project with Pixi](/docs/develop/pixi-project#tell-pixi-how-to-build-it) explains:
+
+```toml title="follow_reference_plugin_speed/pixi.toml"
+[package]
+name = "follow_reference_plugin_speed"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{
+  as2_behavior = { conda = ["as2_behavior"] },
+  as2_behaviors_motion = { conda = ["as2_behaviors_motion"] },
+  as2_core = { conda = ["as2_core"] },
+  as2_motion_reference_handlers = { conda = ["as2_motion_reference_handlers"] },
+  as2_msgs = { conda = ["as2_msgs"] },
+}]
+```
+
+Add it to the workspace's `pixi.toml` and build:
+
+```toml title="pixi.toml"
+[dependencies]
+follow_reference_plugin_speed = { path = "follow_reference_plugin_speed" }
+```
+
+```bash
+pixi install
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Run the behavior with it
+
+Start the drone, as in the [Quickstart](/docs/getting-started/quickstart). With Pixi, your package
+must be in the same workspace as the drone, as [Fly with it](/docs/develop/pixi-project#fly-with-it)
+shows. Then start the follow reference behavior with your configuration:
+
+```bash tab="colcon"
+ros2 run as2_behaviors_motion follow_reference_behavior_node --ros-args -r __ns:=/drone0 \
+  --params-file $(ros2 pkg prefix --share follow_reference_plugin_speed)/config/follow_reference_plugin_speed.yaml
+```
+
+```bash tab="Pixi"
+pixi run bash -c 'ros2 run as2_behaviors_motion follow_reference_behavior_node --ros-args -r __ns:=/drone0 \
+  --params-file $(ros2 pkg prefix --share follow_reference_plugin_speed)/config/follow_reference_plugin_speed.yaml'
+```
+
+The behavior logs the plugin it loaded:
+
+```console noCopy
+[INFO] [drone0.FollowReferenceBehavior]: [follow_reference_plugin_speed.gain] = 1.000000
+[INFO] [drone0.FollowReferenceBehavior]: FOLLOW REFERENCE BEHAVIOR PLUGIN LOADED: follow_reference_plugin_speed::Plugin
+```
+
+<Callout type="warn" title="The launch file only knows the built-in plugins">
+  `follow_reference_behavior_launch.py` only accepts the plugins listed in `as2_behaviors_motion`'s
+  own `plugins.xml`, and rejects any other `plugin_name`. Run the node directly as above, or start it
+  from a launch file of your own.
 </Callout>
+
+</Step>
+<Step>
+
+### Fly it
+
+Follow reference has a Python API module, so a mission loads it like any other. This one follows a
+fixed point for eight seconds, then stops:
+
+```python title="follow_mission.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+drone.load_module("follow_reference")
+
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.5, speed=0.5)
+
+# Follow a point in earth, at up to 1 m/s across and 0.5 m/s up or down
+drone.follow_reference(3.0, 0.0, 2.0, "earth", 1.0, 1.0, 0.5)
+for _ in range(8):
+    time.sleep(1.0)
+    feedback = drone.follow_reference.feedback
+    print(f"{feedback.actual_distance_to_goal:.2f} m to go at {feedback.actual_speed:.2f} m/s")
+
+# Follow reference never ends on its own
+drone.follow_reference.stop()
+
+drone.land(speed=0.5)
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```bash tab="colcon"
+python3 follow_mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 follow_mission.py
+```
+
+The drone speeds up to the 1 m/s limit, then slows down as it gets close:
+
+```console noCopy
+3.05 m to go at 0.07 m/s
+2.28 m to go at 1.06 m/s
+1.06 m to go at 1.02 m/s
+0.48 m to go at 0.76 m/s
+0.05 m to go at 0.13 m/s
+0.00 m to go at 0.01 m/s
+0.00 m to go at 0.00 m/s
+0.00 m to go at 0.00 m/s
+```
+
+The target can also be in a frame that moves, like a point 2 m behind another drone in
+`drone1/base_link`. The plugin converts it on every cycle, so the drone keeps up with it.
+
+</Step>
+</Steps>
+
+## Contribute it to Aerostack2
+
+The built-in plugins live in `as2_behaviors_motion`, next to the behavior. To add yours there:
+
+- Put the source in `follow_reference_behavior/plugins/`.
+- Add it to `PLUGINS_CPP_FILES` in the package's `CMakeLists.txt`, which builds every motion plugin
+  into one library.
+- Add its `<class>` to the package's `plugins.xml`, inside the existing `<library>`.
+- Put its default parameters in `follow_reference_behavior/config/config_default.yaml`, under the
+  plugin's name.
+
+The launch file then accepts it as a `plugin_name`, as long as its name contains
+`follow_reference`.
+
+## Real implementations
+
+- [`follow_reference_base.hpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_motion/follow_reference_behavior/include/follow_reference_behavior/follow_reference_base.hpp)
+  is the base class, with the checks it runs before the plugin.
+- [`follow_reference_plugin_position.cpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_motion/follow_reference_behavior/plugins/follow_reference_plugin_position.cpp)
+  sends position setpoints, and handles every yaw mode.
+- [`follow_reference_plugin_trajectory.cpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_motion/follow_reference_behavior/plugins/follow_reference_plugin_trajectory.cpp)
+  hands the motion to the trajectory generator, and moves its end as the target moves.
+- [`follow_reference_behavior.cpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_motion/follow_reference_behavior/src/follow_reference_behavior.cpp)
+  is the behavior that loads the plugin.
+
+## Next steps
+
+<Cards>
+  <Card title="Trajectory generation plugin" href="/docs/develop/trajectory-generation-plugin" description="Add a planner to the behavior the trajectory plugins use." />
+  <Card title="Motion behaviors" href="/docs/plugins/motion-behaviors" description="The built-in plugins and their parameters." />
+</Cards>

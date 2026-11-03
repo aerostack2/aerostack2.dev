@@ -1,8 +1,654 @@
 ---
 title: Aerial Platform
+description: Write an aerial platform from scratch, build it in your own workspace and fly it with the stock state estimator, controller and behaviors.
 icon: PlaneTakeoff
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/aerial_platform.rst`.
+The [aerial platform](/docs/concepts/aerial-platform) is the node that talks to the drone. A new drone
+or simulator needs a new platform, and nothing else in the stack changes. This guide builds one from
+scratch, `kinematic_platform`, and flies it with the stock components.
+
+The drone is kept as simple as possible. It has no physics and moves at exactly the velocity it's
+told to, then reports where it is as odometry. That's enough to arm it, take off, fly to points and
+land, and it touches every part of the platform's contract. A platform for a real drone does the
+same with a link to its autopilot where this one does the arithmetic.
+
+## Before you start
+
+- **Aerostack2 to build against.** Either an [installation](/docs/getting-started/installation) and a
+  colcon workspace for your package, or a [Pixi workspace](/docs/develop/pixi-project).
+- **The platform concepts.** [Aerial platform](/docs/concepts/aerial-platform) explains when commands
+  are sent, the state machine and control modes. The topics and services are listed under
+  [ROS 2 interfaces](/docs/ros2-interfaces/aerial-platform).
+
+## The base class
+
+A platform is a node that inherits from `as2::AerialPlatform`, declared in
+[aerial_platform.hpp](https://github.com/aerostack2/aerostack2/blob/main/as2_core/include/as2_core/aerial_platform.hpp).
+The base class creates the services, the command subscriptions, the state machine and the
+`platform/info` topic. Your node fills in what depends on the drone.
+
+| Method | Required | What it does |
+| --- | --- | --- |
+| `configureSensors` | Yes | Creates the sensors the platform publishes. The base class doesn't call it, so call it from your constructor |
+| `ownSendCommand` | Yes | Sends the latest actuator command to the drone. Called at `cmd_freq` while the drone is ready to fly |
+| `ownSetArmingState` | Yes | Arms with true and disarms with false. Returning false refuses the request |
+| `ownSetOffboardControl` | Yes | Turns offboard control on with true and off with false |
+| `ownSetPlatformControlMode` | Yes | Switches the drone to a control mode and declares the frames its commands are wanted in |
+| `ownKillSwitch` | Yes | Cuts the motors at once |
+| `ownStopPlatform` | Yes | Holds the drone where it is, as best it can |
+| `ownTakeoff`, `ownLand` | No | Take off or land natively. They return false unless you override them |
+
+The base class also hands the node what it needs to do that.
+
+| Member | What it gives |
+| --- | --- |
+| `command_twist_msg_`, `command_pose_msg_`, `command_thrust_msg_`, `command_trajectory_msg_` | The latest actuator commands, already in the frames the control mode asked for |
+| `setCommandTwistFrameId()`, `setCommandPoseFrameId()` | Declare the frames the commands of the active mode come in. Call them from `ownSetPlatformControlMode` |
+| `platform_info_msg_` | The status published on `platform/info`, such as the armed, offboard and connected flags |
+| `tf_handler_` | A TF buffer, for transforms of your own |
+| `getOdomFrameId()`, `getBaseFrameId()`, `getEarthFrameId()` | The drone's [frame names](/docs/concepts/frames#frame-names), already namespaced |
+
+Arming, offboard and the control mode only change once your method returns true. A mode that carries
+a twist or a pose is refused when `ownSetPlatformControlMode` doesn't declare a frame for it.
+
+## Write the platform
+
+<Steps>
+<Step>
+
+### Create the package
+
+Make a folder for the package in your workspace:
+
+```bash
+mkdir -p kinematic_platform/src kinematic_platform/config kinematic_platform/launch
+```
+
+By the end of the guide it holds these files:
+
+<FileTree>
+  <TreeFolder name="kinematic_platform">
+    <TreeFile name="package.xml" />
+    <TreeFile name="CMakeLists.txt" />
+    <TreeFile name="pixi.toml" note="Only for a Pixi workspace" />
+    <TreeFolder name="config">
+      <TreeFile name="control_modes.yaml" note="The control modes the drone accepts" />
+      <TreeFile name="platform.yaml" note="The platform's parameters" />
+    </TreeFolder>
+    <TreeFolder name="launch">
+      <TreeFile name="kinematic_platform.launch.py" />
+    </TreeFolder>
+    <TreeFolder name="src">
+      <TreeFile name="kinematic_platform_node.cpp" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Step>
+<Step>
+
+### Write the node
+
+The whole platform fits in one file. The stock platforms split it into a header, a library and a
+`_node.cpp` with only `main`, as [Creating a package](/docs/develop/new-package#layout) describes.
+
+```cpp title="kinematic_platform/src/kinematic_platform_node.cpp"
+#include <algorithm>
+#include <cmath>
+#include <memory>
+
+#include <as2_core/aerial_platform.hpp>
+#include <as2_core/core_functions.hpp>
+#include <as2_core/names/topics.hpp>
+#include <as2_core/sensor.hpp>
+#include <as2_msgs/msg/control_mode.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+class KinematicPlatform : public as2::AerialPlatform
+{
+public:
+  KinematicPlatform()
+  : as2::AerialPlatform()
+  {
+    configureSensors();
+
+    const double sim_freq = this->getParameter<double>("sim_freq", 100.0);
+    last_step_ = this->now();
+    sim_timer_ = this->create_timer(
+      std::chrono::duration<double>(1.0 / sim_freq), [this]() {simulate();});
+  }
+
+  void configureSensors() override
+  {
+    odom_sensor_ = std::make_unique<as2::sensors::Sensor<nav_msgs::msg::Odometry>>(
+      as2_names::topics::sensor_measurements::odom, this);
+  }
+
+  bool ownSetArmingState(bool state) override
+  {
+    armed_ = state;
+    stop();
+    return true;
+  }
+
+  bool ownSetOffboardControl(bool offboard) override
+  {
+    (void)offboard;
+    return true;
+  }
+
+  bool ownSetPlatformControlMode(const as2_msgs::msg::ControlMode & msg) override
+  {
+    control_mode_ = msg.control_mode;
+    // The drone integrates its velocity in odom, so it wants its commands there
+    setCommandTwistFrameId(this->getOdomFrameId());
+    stop();
+    return true;
+  }
+
+  bool ownSendCommand() override
+  {
+    if (control_mode_ != as2_msgs::msg::ControlMode::SPEED) {
+      stop();
+      return true;
+    }
+    const auto & twist = command_twist_msg_.twist;
+    vx_ = twist.linear.x;
+    vy_ = twist.linear.y;
+    vz_ = twist.linear.z;
+    yaw_rate_ = twist.angular.z;
+    return true;
+  }
+
+  void ownKillSwitch() override
+  {
+    // The motors stop, and this drone drops straight to the ground
+    armed_ = false;
+    stop();
+    z_ = 0.0;
+  }
+
+  void ownStopPlatform() override
+  {
+    stop();
+  }
+
+private:
+  std::unique_ptr<as2::sensors::Sensor<nav_msgs::msg::Odometry>> odom_sensor_;
+  rclcpp::TimerBase::SharedPtr sim_timer_;
+  rclcpp::Time last_step_;
+
+  bool armed_ = false;
+  uint8_t control_mode_ = as2_msgs::msg::ControlMode::UNSET;
+  double x_ = 0.0, y_ = 0.0, z_ = 0.0, yaw_ = 0.0;
+  double vx_ = 0.0, vy_ = 0.0, vz_ = 0.0, yaw_rate_ = 0.0;
+
+  void stop()
+  {
+    vx_ = vy_ = vz_ = yaw_rate_ = 0.0;
+  }
+
+  // Moves the drone at the commanded velocity and publishes where it is
+  void simulate()
+  {
+    const rclcpp::Time now = this->now();
+    const double dt = (now - last_step_).seconds();
+    last_step_ = now;
+
+    if (armed_) {
+      x_ += vx_ * dt;
+      y_ += vy_ * dt;
+      z_ += vz_ * dt;
+      yaw_ = std::atan2(std::sin(yaw_ + yaw_rate_ * dt), std::cos(yaw_ + yaw_rate_ * dt));
+    }
+    if (z_ < 0.0) {
+      // On the ground, which stops it moving down
+      z_ = 0.0;
+      vz_ = 0.0;
+    }
+
+    nav_msgs::msg::Odometry odom;
+    odom.header.stamp = now;
+    odom.header.frame_id = this->getOdomFrameId();
+    odom.child_frame_id = this->getBaseFrameId();
+    odom.pose.pose.position.x = x_;
+    odom.pose.pose.position.y = y_;
+    odom.pose.pose.position.z = z_;
+    odom.pose.pose.orientation.z = std::sin(yaw_ / 2.0);
+    odom.pose.pose.orientation.w = std::cos(yaw_ / 2.0);
+    // Odometry carries its velocity in the body frame
+    odom.twist.twist.linear.x = std::cos(yaw_) * vx_ + std::sin(yaw_) * vy_;
+    odom.twist.twist.linear.y = -std::sin(yaw_) * vx_ + std::cos(yaw_) * vy_;
+    odom.twist.twist.linear.z = vz_;
+    odom.twist.twist.angular.z = yaw_rate_;
+    odom_sensor_->updateData(odom);
+  }
+};
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<KinematicPlatform>();
+  as2::spinLoop(node);
+  rclcpp::shutdown();
+  return 0;
+}
+```
+
+Each method does one job.
+
+- **The constructor** creates the sensors, reads its own parameter and starts the simulation timer.
+  The base class names the node `platform`.
+- **`configureSensors`** creates one sensor, the odometry. `as2::sensors::Sensor` publishes it on
+  `sensor_measurements/odom` with the sensor data QoS, and `updateData` publishes each new message.
+  Pass a frequency as the third argument to publish at a fixed rate instead.
+- **`ownSetArmingState`** and **`ownSetOffboardControl`** always succeed here. On a real drone they
+  send the request to the autopilot and return whether it was accepted.
+- **`ownSetPlatformControlMode`** stores the mode and asks for the twist commands in `odom`. The base
+  class transforms every command into that frame before `ownSendCommand` runs.
+- **`ownSendCommand`** copies the velocity into the simulation. In hover it stops.
+- **`ownKillSwitch`** and **`ownStopPlatform`** handle the two emergency alerts. After either one
+  the platform stays in the emergency state, and the base class calls `ownStopPlatform` on every
+  cycle until the node restarts.
+- **`simulate`** stands in for the drone. It moves at the commanded velocity, keeps the drone above
+  the ground and publishes the odometry in `odom`, with the body frame as its child.
+
+<Callout title="Report the connection yourself">
+  The base class starts with the drone marked as connected and never changes it. A platform for real
+  hardware should set `platform_info_msg_.connected` from the state of its link, since commands are
+  only sent while it's true.
 </Callout>
+
+</Step>
+<Step>
+
+### List the control modes
+
+The control modes file lists the modes the drone accepts:
+
+```yaml title="kinematic_platform/config/control_modes.yaml"
+available_modes:
+  - 0b00010000 # HOVER
+  - 0b01000100 # SPEED with yaw SPEED
+```
+
+Each mode is one byte. The first four bits are the mode, the next two the yaw mode, and the last two
+are unused and stay at zero. Speed is `0100`, hover is `0001` and a yaw speed is `01`. The
+[ControlMode](/docs/ros2-interfaces/as2-msgs#controlmode) reference has every code.
+
+<Callout type="warn" title="The file's numbers aren't the message's">
+  The bytes in this file number the modes differently from the constants in
+  `as2_msgs/msg/ControlMode`, where speed is 3, not 4. The mode that reaches
+  `ownSetPlatformControlMode` is a message, so compare it with the message's constants, as the node
+  does.
+</Callout>
+
+Speed with a yaw speed is what the [PID speed controller](/docs/plugins/motion-controller#pid-speed)
+sends, so the stock behaviors can fly this drone. The behaviors ask for positions, and the
+controller turns them into velocities. Before calling your node, the base class matches each request
+against this list and refuses the modes that aren't in it.
+
+</Step>
+<Step>
+
+### Set the parameters
+
+```yaml title="kinematic_platform/config/platform.yaml"
+/**:
+  ros__parameters:
+    cmd_freq: 100.0  # How often commands are sent to the drone, in Hz
+    info_freq: 10.0  # How often platform/info is published, in Hz
+    sim_freq: 100.0  # How often the drone moves and publishes its odometry, in Hz
+```
+
+`cmd_freq` and `info_freq` belong to the base class. `sim_freq` is the node's own.
+
+</Step>
+<Step>
+
+### Write the launch file
+
+The launch file starts the node as `platform` in the drone's namespace and passes it both files:
+
+```python title="kinematic_platform/launch/kinematic_platform.launch.py"
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    config = os.path.join(get_package_share_directory('kinematic_platform'), 'config')
+
+    return LaunchDescription([
+        DeclareLaunchArgument('namespace', default_value='drone0'),
+        DeclareLaunchArgument(
+            'config_file', default_value=os.path.join(config, 'platform.yaml')),
+        DeclareLaunchArgument(
+            'control_modes_file', default_value=os.path.join(config, 'control_modes.yaml')),
+        Node(
+            package='kinematic_platform',
+            executable='kinematic_platform_node',
+            name='platform',
+            namespace=LaunchConfiguration('namespace'),
+            output='screen',
+            emulate_tty=True,
+            parameters=[
+                LaunchConfiguration('config_file'),
+                {'control_modes_file': LaunchConfiguration('control_modes_file')},
+            ],
+        ),
+    ])
+```
+
+`control_modes_file` has no default in the base class, so the node won't start without it.
+
+</Step>
+<Step>
+
+### Describe the package
+
+```xml title="kinematic_platform/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>kinematic_platform</name>
+  <version>0.1.0</version>
+  <description>A simulated drone that moves exactly as it's commanded.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>as2_core</depend>
+  <depend>as2_msgs</depend>
+
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake title="kinematic_platform/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(kinematic_platform)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(as2_core REQUIRED)
+find_package(as2_msgs REQUIRED)
+
+add_executable(kinematic_platform_node src/kinematic_platform_node.cpp)
+ament_target_dependencies(kinematic_platform_node rclcpp nav_msgs as2_core as2_msgs)
+
+install(TARGETS kinematic_platform_node DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
+
+ament_package()
+```
+
+</Step>
+<Step>
+
+### Build it
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+Put the package in the `src` folder of your workspace, then build it from the root with Aerostack2
+sourced:
+
+```bash
+cd ~/aerostack2_ws
+colcon build --symlink-install --packages-select kinematic_platform
+source install/setup.bash
+```
+
+</Tab>
+<Tab value="Pixi">
+
+Give the package a `pixi.toml` that maps its Aerostack2 dependencies, as in
+[Your project with Pixi](/docs/develop/pixi-project#tell-pixi-how-to-build-it):
+
+```toml title="kinematic_platform/pixi.toml"
+[package]
+name = "kinematic_platform"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{
+  as2_core = { conda = ["as2_core"] },
+  as2_msgs = { conda = ["as2_msgs"] },
+}]
+```
+
+Add it to the workspace's `pixi.toml` as a path dependency, together with the components it flies
+with. On Jazzy the ROS 2 tools start with `ros-jazzy-` instead:
+
+```toml title="pixi.toml"
+[dependencies]
+kinematic_platform = { path = "kinematic_platform" }
+as2_state_estimator = "*"
+as2_motion_controller = "*"
+as2_behaviors_motion = "*"
+as2_python_api = "*"
+ros-humble-ros2launch = "*"
+ros-humble-ros2topic = "*"
+ros-humble-ros2service = "*"
+```
+
+Then build it:
+
+```bash
+pixi install
+```
+
+Run the commands in the rest of the guide inside `pixi shell`, or put `pixi run` in front of each.
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## Fly it
+
+<Steps>
+<Step>
+
+### Start the platform
+
+```bash
+ros2 launch kinematic_platform kinematic_platform.launch.py namespace:=drone0
+```
+
+The platform logs the modes it read from the file:
+
+```console noCopy
+[INFO] [as2_mode]: Control mode: HOVER YAW_ANGLE
+[INFO] [as2_mode]: Control mode: SPEED YAW_SPEED
+```
+
+Hover's yaw bits are zero, so it prints with a yaw angle. In a second terminal, check what the
+platform offers:
+
+```bash
+ros2 service call /drone0/platform/list_control_modes as2_msgs/srv/ListControlModes '{}'
+```
+
+```console noCopy
+response:
+as2_msgs.srv.ListControlModes_Response(source='Platform', control_modes=[16, 68])
+```
+
+16 and 68 are the two bytes in the file. The odometry is already on
+`/drone0/sensor_measurements/odom`, at the origin.
+
+</Step>
+<Step>
+
+### Start the rest of the drone
+
+The drone needs a state estimator, a motion controller and the motion behaviors. The
+[raw odometry](/docs/plugins/state-estimator#raw-odometry) estimator reads
+`sensor_measurements/odom` by default, so it needs no settings of its own. Put the plugin choices in
+one file:
+
+```yaml title="config/config.yaml"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_position"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_speed"
+  GoToBehavior:
+    ros__parameters:
+      go_to_plugin_name: "go_to_plugin_position"
+  FollowPathBehavior:
+    ros__parameters:
+      follow_path_plugin_name: "follow_path_plugin_position"
+```
+
+The PID speed controller's gains all default to zero, so give it a position and a yaw gain:
+
+```yaml title="config/pid_speed_controller.yaml"
+/**:
+  ros__parameters:
+    pid_speed_controller:
+      position_control:
+        kp: {x: 1.0, y: 1.0, z: 1.0}
+      yaw_control:
+        kp: 1.0
+```
+
+Start each one in its own terminal:
+
+```bash
+ros2 launch as2_state_estimator state_estimator_launch.py \
+  namespace:=drone0 config_file:=config/config.yaml
+
+ros2 launch as2_motion_controller controller_launch.py \
+  namespace:=drone0 plugin_name:=pid_speed_controller \
+  plugin_config_file:=config/pid_speed_controller.yaml
+
+ros2 launch as2_behaviors_motion motion_behaviors_launch.py \
+  namespace:=drone0 config_file:=config/config.yaml
+```
+
+</Step>
+<Step>
+
+### Fly a mission
+
+```python title="fly.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id='drone0')
+drone.arm()
+drone.offboard()
+print('takeoff', drone.takeoff(height=1.0, speed=0.5))
+print('go_to', drone.go_to(2.0, 0.0, 1.0, speed=0.5))
+print('go_to', drone.go_to(2.0, 2.0, 1.0, speed=0.5))
+print('at', [round(v, 2) for v in drone.position])
+print('land', drone.land(speed=0.3))
+print('at', [round(v, 2) for v in drone.position])
+drone.manual()
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```bash
+python3 fly.py
+```
+
+```console noCopy
+takeoff True
+go_to True
+go_to True
+at [1.99, 1.79, 1.0]
+land True
+at [1.99, 1.89, 0.0]
+```
+
+Go to reports success once the drone is close enough to the goal, so the position it prints falls a
+little short. The platform's log follows the flight through the state machine:
+
+```console noCopy
+[INFO] [drone0.platform]: Transition [ARM] : New State [LANDED]
+[INFO] [drone0.platform]: Transition [TAKE_OFF] : New State [TAKING_OFF]
+[INFO] [drone0.platform]: Twist command frame set to 'drone0/odom'
+[INFO] [drone0.platform]: Transition [TOOK_OFF] : New State [FLYING]
+[INFO] [drone0.platform]: Transition [LAND] : New State [LANDING]
+[INFO] [drone0.platform]: Twist command frame set to 'drone0/odom'
+[INFO] [drone0.platform]: Transition [LANDED] : New State [LANDED]
+[INFO] [drone0.platform]: Transition [DISARM] : New State [DISARMED]
+```
+
+Arming and disarming come from the base class, and the take off and land behaviors send the other
+events. The frame is logged each time the controller sets the platform's mode, once for the take
+off and once for the landing.
+
+</Step>
+<Step>
+
+### Try the kill switch
+
+With the drone flying, publish a kill switch alert:
+
+```bash
+ros2 topic pub --once /drone0/alert_event as2_msgs/msg/AlertEvent '{alert: -1}'
+```
+
+```console noCopy
+[INFO] [drone0.platform]: Transition [EMERGENCY] : New State [EMERGENCY]
+[WARN] [drone0.platform]: KILL SWITCH ACTIVATED
+```
+
+The odometry drops to the ground. The platform now stays in emergency, so restart it before flying
+again.
+
+</Step>
+</Steps>
+
+## Going further
+
+A platform for a real drone replaces `simulate` with the drone's own link.
+
+- **Sensors.** Feed what the autopilot reports into the helpers in `as2_core/sensor.hpp`. Besides
+  `Sensor`, there are `Camera`, `Gimbal` and `GroundTruth`, and each one publishes where the rest of
+  the stack looks for it.
+- **Control modes.** List what the autopilot accepts, then pick a
+  [controller plugin](/docs/plugins/motion-controller#choosing-a-plugin) that produces one of them.
+  Body rates arrive in `command_twist_msg_` and the thrust in `command_thrust_msg_`.
+- **Native take-off and landing.** Override `ownTakeoff` and `ownLand` when the autopilot can do it
+  by itself, and select the platform plugins of the
+  [take off and land behaviors](/docs/concepts/aerial-platform#native-take-off-and-landing).
+
+The platforms that ship with Aerostack2, and those in their own repositories, show each of these.
+
+<Cards>
+  <Card title="Multirotor simulator" href="/docs/aerial-platforms/multirotor-simulator" description="Every control mode, ground truth, GPS and a gimbal." />
+  <Card title="Gazebo" href="/docs/aerial-platforms/gazebo-simulation" description="Velocity and body rate commands, with native take-off and landing." />
+  <Card title="Pixhawk" href="/docs/aerial-platforms/pixhawk" description="A PX4 autopilot, its arming and offboard modes." />
+  <Card title="Crazyflie" href="/docs/aerial-platforms/crazyflie" description="A small drone over a radio link." />
+</Cards>

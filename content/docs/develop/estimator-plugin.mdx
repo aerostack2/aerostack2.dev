@@ -1,8 +1,483 @@
 ---
 title: Estimator Plugin
+description: Write a state estimator plugin from scratch that turns an external pose into the drone's state, build it and fly with it.
 icon: LocateFixed
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/estimator_plugin.rst`.
+The [state estimator](/docs/concepts/state-estimator) gets the drone's state from a plugin, so a new
+way to estimate it is a new plugin. This guide builds one from scratch, `external_pose`, and flies
+the simulated drone with it.
+
+The plugin takes the drone's pose from a `geometry_msgs/msg/PoseStamped` topic, such as a motion
+capture system or a simulator's ground truth. It turns that pose into the TF tree, and
+differentiates it to get the velocity. It's a stripped-down version of the stock `ground_truth`
+plugin.
+
+## Before you start
+
+- **Aerostack2 to build against.** Either an [installation](/docs/getting-started/installation) and a
+  colcon workspace for your package, or a [Pixi workspace](/docs/develop/pixi-project).
+- **The state estimator concepts.** [State estimator](/docs/concepts/state-estimator) explains what
+  the estimator publishes and how the TF tree splits the pose.
+
+## How a plugin fits in
+
+The `state_estimator` node loads the plugin with [pluginlib](https://github.com/ros/pluginlib), by
+the class name `<plugin_name>::Plugin`. The plugin reads its sensors, but it never publishes
+anything. It reports each part of the state to the node, and the node publishes the TF tree,
+`self_localization/pose` and `self_localization/twist`.
+
+The state has four parts, three transforms and a velocity:
+
+| Part | What it is | Reported with |
+| --- | --- | --- |
+| `EARTH_TO_MAP` | Where the drone's map sits in the shared `earth` frame | `setEarthToMap` |
+| `MAP_TO_ODOM` | The drift correction between the map and the odometry | `setMapToOdomPose` |
+| `ODOM_TO_BASE` | The drone's pose in its odometry frame | `setOdomToBaseLinkPose` |
+| `TWIST_IN_BASE` | The drone's velocity, in `base_link` | `setTwistInBaseFrame` |
+
+A plugin claims the parts it's responsible for, and the node refuses a report for any other part.
+The node publishes the pose and the twist once every claimed part has arrived.
+
+## The base class
+
+A plugin inherits from `as2_state_estimator_plugin_base::StateEstimatorBase`, declared in
+[plugin_base.hpp](https://github.com/aerostack2/aerostack2/blob/main/as2_state_estimator/include/as2_state_estimator/plugin_base.hpp).
+It overrides two methods.
+
+| Method | What it does |
+| --- | --- |
+| `onSetup` | Reads the plugin's parameters and subscribes to its sensors. Runs once, when the plugin is loaded |
+| `getTransformationTypesAvailable` | Lists the parts of the state the plugin reports |
+
+The base fills three members before it calls `onSetup`.
+
+| Member | What it gives |
+| --- | --- |
+| `node_ptr_` | The state estimator node, for parameters, subscriptions, the clock and logging |
+| `state_estimator_interface_` | Where the plugin reports the state. It also gives the frame names and the last known transforms |
+| `tf_handler_` | Reads the TF tree, for sensors mounted away from `base_link` |
+
+The interface takes each pose as a `tf2::Transform` or as a `geometry_msgs::msg::PoseWithCovariance`,
+and the twist as a `geometry_msgs::msg::TwistWithCovariance`. Every report carries the stamp of
+the measurement it comes from. `setEarthToMap` and `setMapToOdomPose` also take a flag that
+publishes the transform as static. The frame names come namespaced from `getEarthFrame`,
+`getMapFrame`, `getOdomFrame` and `getBaseFrame`.
+
+## Write the plugin
+
+<Steps>
+<Step>
+
+### Create the package
+
+<FileTree>
+  <TreeFolder name="external_pose">
+    <TreeFile name="CMakeLists.txt" />
+    <TreeFile name="package.xml" />
+    <TreeFile name="plugins.xml" note="Tells pluginlib which class the library holds" />
+    <TreeFile name="pixi.toml" note="Only for a Pixi workspace" />
+    <TreeFolder name="src">
+      <TreeFile name="external_pose.cpp" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+Put it in the `src` folder of your colcon workspace, or next to the `pixi.toml` of your Pixi
+workspace. It's a package of your own, so it doesn't need the `as2_` prefix. The plugins that ship
+with Aerostack2 split their class into a header and a source file. This one fits in a single file.
+
+</Step>
+<Step>
+
+### Write the estimator
+
+```cpp title="external_pose/src/external_pose.cpp"
+#include <string>
+#include <vector>
+
+#include <as2_state_estimator/plugin_base.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <pluginlib/class_list_macros.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
+namespace external_pose
+{
+
+using as2_state_estimator::TransformInformatonType;
+
+class Plugin : public as2_state_estimator_plugin_base::StateEstimatorBase
+{
+public:
+  void onSetup() override
+  {
+    const std::string topic =
+      node_ptr_->getParameter<std::string>("external_pose.pose_topic", "ground_truth/pose");
+
+    pose_sub_ = node_ptr_->create_subscription<geometry_msgs::msg::PoseStamped>(
+      topic, rclcpp::SensorDataQoS(),
+      [this](const geometry_msgs::msg::PoseStamped & msg) {poseCallback(msg);});
+  }
+
+  std::vector<TransformInformatonType> getTransformationTypesAvailable() const override
+  {
+    return {
+      TransformInformatonType::EARTH_TO_MAP,
+      TransformInformatonType::MAP_TO_ODOM,
+      TransformInformatonType::ODOM_TO_BASE,
+      TransformInformatonType::TWIST_IN_BASE};
+  }
+
+private:
+  void poseCallback(const geometry_msgs::msg::PoseStamped & msg)
+  {
+    if (msg.header.frame_id != state_estimator_interface_->getEarthFrame()) {
+      RCLCPP_WARN_THROTTLE(
+        node_ptr_->get_logger(), *node_ptr_->get_clock(), 1000,
+        "Pose in frame '%s', expected '%s'", msg.header.frame_id.c_str(),
+        state_estimator_interface_->getEarthFrame().c_str());
+      return;
+    }
+
+    if (!has_last_pose_) {
+      // map and odom sit at the origin of earth, and never move
+      const auto identity = tf2::Transform::getIdentity();
+      state_estimator_interface_->setEarthToMap(identity, msg.header.stamp, true);
+      state_estimator_interface_->setMapToOdomPose(identity, msg.header.stamp, true);
+    }
+
+    tf2::Transform pose;
+    tf2::fromMsg(msg.pose, pose);
+    const rclcpp::Time stamp(msg.header.stamp);
+
+    // With map and odom at the origin, the pose in earth is the pose in odom
+    state_estimator_interface_->setOdomToBaseLinkPose(pose, msg.header.stamp);
+
+    if (has_last_pose_) {
+      const double dt = (stamp - last_stamp_).seconds();
+      if (dt > 0.0) {
+        state_estimator_interface_->setTwistInBaseFrame(
+          twistInBase(last_pose_, pose, dt), msg.header.stamp);
+      }
+    }
+    last_pose_ = pose;
+    last_stamp_ = stamp;
+    has_last_pose_ = true;
+  }
+
+  // Differentiate two poses into a twist in base_link
+  static geometry_msgs::msg::TwistWithCovariance twistInBase(
+    const tf2::Transform & from, const tf2::Transform & to, double dt)
+  {
+    const tf2::Vector3 linear = tf2::quatRotate(
+      to.getRotation().inverse(), (to.getOrigin() - from.getOrigin()) / dt);
+
+    // For the small rotation of one step, the vector part of the quaternion
+    // is half the angle turned. Its sign picks the short way round
+    const tf2::Quaternion delta = from.getRotation().inverse() * to.getRotation();
+    const double scale = (delta.w() < 0.0 ? -2.0 : 2.0) / dt;
+    const tf2::Vector3 angular = scale * tf2::Vector3(delta.x(), delta.y(), delta.z());
+
+    geometry_msgs::msg::TwistWithCovariance twist;
+    twist.twist.linear = tf2::toMsg(linear);
+    twist.twist.angular = tf2::toMsg(angular);
+    return twist;
+  }
+
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
+  tf2::Transform last_pose_;
+  rclcpp::Time last_stamp_;
+  bool has_last_pose_ = false;
+};
+
+}  // namespace external_pose
+
+PLUGINLIB_EXPORT_CLASS(external_pose::Plugin, as2_state_estimator_plugin_base::StateEstimatorBase)
+```
+
+The class is called `Plugin`, inside a namespace named after the plugin. The estimator builds the
+class name from `plugin_name`, so the namespace has to match it. The enum really is spelled
+`TransformInformatonType`.
+
+**Parameters.** A plugin's parameters go under its name, so the topic is
+`external_pose.pose_topic`. `getParameter` with a default declares the parameter when nothing sets
+it, so the plugin works without a configuration file. The topic is relative, so it resolves under
+the drone's namespace, like `/drone0/ground_truth/pose`. The sensor data QoS is best effort, which
+receives from both reliable and best effort publishers.
+
+**What it claims.** The plugin reports all four parts of the state, so it lists all four in
+`getTransformationTypesAvailable`.
+
+**The fixed transforms.** This plugin puts `map` and `odom` at the origin of `earth`. It reports both
+once, as static transforms, with the first pose. The stock `ground_truth` plugin places `map` where
+the first pose is instead, so the drone starts at the origin of its map.
+
+**The pose.** Each pose has to be stamped in `earth`, and the plugin drops any other. With `map` and
+`odom` at the origin, the pose in `earth` is also the pose of `base_link` in `odom`, so it's reported
+as it is.
+
+**The velocity.** The twist is the difference between two poses over the time between their stamps.
+The linear part is rotated into `base_link`, where the node expects it. The angular part comes
+from the rotation between the two orientations, which is already in the body frame.
+
+<Callout type="warn" title="Report from the callbacks, not from onSetup">
+  The node registers what a plugin claims only after `onSetup` returns, so it refuses anything
+  reported during `onSetup`. The log then shows
+  `The plugin external_pose is not authorized to publish in the earth_to_map frame`, and the node
+  never publishes a pose. Send fixed transforms with the first measurement, as above.
 </Callout>
+
+</Step>
+<Step>
+
+### Export the plugin
+
+`plugins.xml` names the library and the class inside it:
+
+```xml title="external_pose/plugins.xml"
+<library path="external_pose">
+  <class type="external_pose::Plugin"
+    base_class_type="as2_state_estimator_plugin_base::StateEstimatorBase">
+    <description>Takes the drone's pose from an external source, like motion capture.</description>
+  </class>
+</library>
+```
+
+The package depends on the state estimator, which holds the base class:
+
+```xml title="external_pose/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>external_pose</name>
+  <version>0.1.0</version>
+  <description>A state estimator plugin that takes the pose from an external source.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>pluginlib</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>as2_core</depend>
+  <depend>as2_state_estimator</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+`CMakeLists.txt` builds the plugin as a shared library and registers it:
+
+```cmake title="external_pose/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(external_pose)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(as2_core REQUIRED)
+find_package(as2_state_estimator REQUIRED)
+
+add_library(${PROJECT_NAME} SHARED src/external_pose.cpp)
+ament_target_dependencies(${PROJECT_NAME}
+  rclcpp pluginlib geometry_msgs tf2 tf2_geometry_msgs as2_core as2_state_estimator)
+
+# Register the plugin with the state estimator
+pluginlib_export_plugin_description_file(as2_state_estimator plugins.xml)
+
+install(TARGETS ${PROJECT_NAME}
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin)
+
+ament_package()
+```
+
+The first argument of `pluginlib_export_plugin_description_file` is the package that owns the base
+class, not yours. That's how the state estimator finds plugins in other packages. The library's
+name has to match the `path` in `plugins.xml`.
+
+</Step>
+<Step>
+
+### Build it
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+From the root of your workspace, with Aerostack2 sourced:
+
+```bash
+cd ~/aerostack2_ws
+colcon build --symlink-install --packages-select external_pose
+source install/setup.bash
+```
+
+</Tab>
+<Tab value="Pixi">
+
+Give the package a `pixi.toml` that maps its Aerostack2 dependencies, as in
+[Your project with Pixi](/docs/develop/pixi-project#tell-pixi-how-to-build-it):
+
+```toml title="external_pose/pixi.toml"
+[package]
+name = "external_pose"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{
+  as2_core = { conda = ["as2_core"] },
+  as2_state_estimator = { conda = ["as2_state_estimator"] },
+}]
+```
+
+Add it to the workspace's `pixi.toml` as a path dependency:
+
+```toml title="pixi.toml"
+[dependencies]
+external_pose = { path = "external_pose" }
+```
+
+Then build it:
+
+```bash
+pixi install
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## Run it
+
+<Steps>
+<Step>
+
+### Start the estimator with your plugin
+
+<Callout type="warn" title="The estimator's launch file only takes the stock plugins">
+  `state_estimator_launch.py` refuses a `plugin_name` that isn't one of the plugins that ship with
+  Aerostack2, and looks for the plugin's defaults in its own package. Start the node directly
+  instead, as below.
+</Callout>
+
+Start the drone's platform first, so its ground truth is there to read. Then run this in a shell
+where `ros2` finds your package. That's a terminal where you sourced `install/setup.bash`, or one
+opened with `pixi shell` in your Pixi workspace:
+
+```bash
+ros2 run as2_state_estimator as2_state_estimator_node --ros-args \
+  -r __ns:=/drone0 \
+  -p plugin_name:=external_pose \
+  -p external_pose.pose_topic:=ground_truth/pose
+```
+
+For a motion capture system, point `external_pose.pose_topic` at the topic with the drone's pose,
+stamped in `earth`. In a simulator with its own clock, such as Gazebo, add `-p use_sim_time:=true`.
+
+The estimator logs the plugin it loaded:
+
+```console noCopy
+[INFO] [drone0.state_estimator]: Loading plugin external_pose
+[INFO] [drone0.state_estimator]: Loaded plugin external_pose
+[INFO] [drone0.state_estimator]: State published at max rate (every update)
+```
+
+</Step>
+<Step>
+
+### Check the state
+
+The node publishes the pose once every part has arrived. On the ground it's close to the origin:
+
+```bash
+ros2 topic echo --once /drone0/self_localization/pose
+```
+
+```console noCopy
+header:
+  stamp:
+    sec: 1793666460
+    nanosec: 642740515
+  frame_id: earth
+pose:
+  position:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  orientation:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    w: 1.0
+---
+```
+
+The TF tree has the whole chain. The fixed `map → odom` transform shows a time of 0, which is how a
+static transform appears:
+
+```bash
+ros2 run tf2_ros tf2_echo drone0/map drone0/odom
+```
+
+```console noCopy
+At time 0.0
+- Translation: [0.000, 0.000, 0.000]
+- Rotation: in Quaternion (xyzw) [0.000, 0.000, 0.000, 1.000]
+```
+
+</Step>
+<Step>
+
+### Fly a mission
+
+Start the motion controller and the motion behaviors as usual, and leave out the stock estimator.
+The [multirotor simulator project](https://github.com/aerostack2/project_as2_multirotor_simulator)
+has all of them. Then fly the `fly.py` mission from the
+[controller plugin guide](/docs/develop/controller-plugin#fly-a-mission). With the stock PID speed
+controller, it prints:
+
+```console noCopy
+takeoff True
+go_to True
+at [1.82, 0.91, 1.49]
+go_to True
+at [0.21, 0.1, 1.5]
+land True
+```
+
+The positions the mission prints come from your plugin, through `self_localization/pose`.
+
+</Step>
+</Steps>
+
+## Going further
+
+The plugins that ship with Aerostack2 cover what this one leaves out.
+
+- [ground_truth](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/ground_truth)
+  also reads motion capture rigid bodies, takes the velocity from a topic when there is one, and
+  drops poses that arrive out of order.
+- [raw_odometry](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/raw_odometry)
+  republishes an odometry, and uses GPS to place the drone on the globe.
+- [simple_ekf](https://github.com/aerostack2/aerostack2/tree/main/as2_state_estimator/plugins/simple_ekf)
+  fuses an IMU with several sources. It reports drift corrections in `map → odom`, so
+  `odom → base_link` stays smooth.
+
+<Cards>
+  <Card title="State estimator" href="/docs/concepts/state-estimator" description="The outputs, the TF tree and how to choose a plugin." />
+  <Card title="State estimator plugins" href="/docs/plugins/state-estimator" description="The stock plugins and every setting they take." />
+</Cards>

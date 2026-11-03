@@ -1,8 +1,750 @@
 ---
 title: Behavior
+description: Write a behavior with its own action, run it next to the drone and call it from a Python mission.
 icon: Workflow
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/behavior.rst`.
+A [behavior](/docs/concepts/behaviors) is a node that serves one action. Missions start it with a
+goal, follow its feedback, and can pause, resume, modify or stop it. This guide builds
+`circle_behavior`, which flies the drone around a circle that starts where it is.
+
+It has three parts:
+
+- **The action**, which says what a goal, a result and the feedback hold.
+- **The behavior server**, a C++ node that flies the circle.
+- **A Python API module**, so a mission can call `drone.circle(...)`.
+
+## Before you start
+
+- **A workspace to build in.** Either a colcon workspace with Aerostack2, from
+  [Installation](/docs/getting-started/installation), or a Pixi workspace like the one in
+  [Your project with Pixi](/docs/develop/pixi-project).
+- **A drone to fly.** The simulated drone from the [Quickstart](/docs/getting-started/quickstart) is
+  enough.
+- **Some ROS 2.** You should know what an action is, and how a C++ package is built.
+
+## The behavior server
+
+Every behavior inherits from `as2_behavior::BehaviorServer`, templated on its action type. The name
+you pass to its constructor is the name of both the node and the action. From that name, the server
+creates everything a behavior offers. For `CircleBehavior` in `drone0`, that's:
+
+- The `/drone0/CircleBehavior` action. Cancelling it is the same as a stop.
+- The pause, resume, stop and modify services, under `/drone0/CircleBehavior/_behavior/`.
+- The `behavior_status` topic next to them, which says whether a goal is running, paused or neither.
+- A timer that runs the goal at `run_frequency`, a node parameter that defaults to 10 Hz.
+
+[Behaviors](/docs/ros2-interfaces/behaviors) lists these interfaces and their types. Your class
+decides what they do by overriding these methods:
+
+| Method | Called when | Returns |
+| --- | --- | --- |
+| `on_activate(goal)` | A goal arrives | Whether to accept it |
+| `on_modify(goal)` | The modify service gets a new goal | Whether the change was taken |
+| `on_pause(message)` | The pause service is called while a goal runs | Whether it paused |
+| `on_resume(message)` | The resume service is called while paused | Whether it resumed |
+| `on_deactivate(message)` | The stop service is called, or the goal is cancelled | Whether it stopped |
+| `on_run(goal, feedback, result)` | On every cycle while a goal runs | An `ExecutionStatus` |
+| `on_execution_end(state)` | The goal ends, for any reason | Nothing |
+
+Each method has a default that accepts the request, and the default `on_run` ends the goal at once
+with success. So every behavior overrides at least `on_activate` and `on_run`. The `message` of
+pause, resume and stop is a string you can fill, and the service returns it to the caller.
+
+`on_run` fills the feedback and the result, and returns how the goal is doing:
+
+| Status | What the server does |
+| --- | --- |
+| `RUNNING` | Sends the feedback, and calls `on_run` again on the next cycle |
+| `SUCCESS` | Ends the goal as succeeded, with the result |
+| `FAILURE` or `ABORTED` | Ends the goal as aborted, with the result |
+| `PAUSED` | Pauses the behavior until the resume service is called |
+
+After a goal ends, `on_execution_end` gets the same status. After a stop it gets `ABORTED`.
+
+<Callout type="warn" title="on_run always gets the first goal">
+  The `goal` passed to `on_run` is the one the behavior started with, even after a modify. A
+  behavior that can be modified keeps the goal it's flying in a member, and updates it in
+  `on_modify`.
 </Callout>
+
+## Write the behavior
+
+<Steps>
+<Step>
+
+### Create the package
+
+Make the package's folders in your workspace. With colcon, that's `~/aerostack2_ws/src`. With
+Pixi, it's the workspace folder.
+
+```bash
+mkdir -p circle_behavior/{action,env-hooks,include/circle_behavior,modules,src}
+```
+
+By the end of the guide it holds these files:
+
+<FileTree>
+  <TreeFolder name="circle_behavior">
+    <TreeFile name="CMakeLists.txt" />
+    <TreeFile name="package.xml" />
+    <TreeFile name="pixi.toml" note="Only with Pixi" />
+    <TreeFolder name="action">
+      <TreeFile name="Circle.action" note="The goal, result and feedback" />
+    </TreeFolder>
+    <TreeFolder name="env-hooks">
+      <TreeFile name="circle_behavior.dsv.in" note="Adds the module to AS2_MODULES_PATH" />
+    </TreeFolder>
+    <TreeFolder name="include">
+      <TreeFolder name="circle_behavior">
+        <TreeFile name="circle_behavior.hpp" />
+      </TreeFolder>
+    </TreeFolder>
+    <TreeFolder name="modules">
+      <TreeFile name="circle_module.py" note="The Python API module" />
+    </TreeFolder>
+    <TreeFolder name="src">
+      <TreeFile name="circle_behavior.cpp" note="The behavior server" />
+      <TreeFile name="circle_behavior_node.cpp" note="Only main, which runs it" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Step>
+<Step>
+
+### Define the action
+
+A goal gives the radius, the speed and the number of laps. The feedback reports the laps flown so
+far:
+
+```text title="circle_behavior/action/Circle.action"
+# Fly circles around a point, starting where the drone is
+
+# Goal
+float32 radius         # Radius of the circle (m)
+float32 speed          # Speed along the circle (m/s)
+int32 laps             # Laps to fly
+---
+# Result
+bool circle_success    # False if it failed
+---
+# Feedback
+float32 laps_done      # Laps flown so far
+```
+
+The action is generated in the same package as the behavior, which keeps the guide short. If other
+packages need it, give it an interfaces package of its own. Aerostack2 keeps all its actions in
+`as2_msgs`.
+
+</Step>
+<Step>
+
+### Declare the server
+
+The class overrides every method of the server. It sends references through two motion reference
+handlers, one for position setpoints and one to hover, and listens to the platform and the state
+estimator:
+
+```cpp title="circle_behavior/include/circle_behavior/circle_behavior.hpp"
+#ifndef CIRCLE_BEHAVIOR__CIRCLE_BEHAVIOR_HPP_
+#define CIRCLE_BEHAVIOR__CIRCLE_BEHAVIOR_HPP_
+
+#include <memory>
+#include <string>
+
+#include <as2_behavior/behavior_server.hpp>
+#include <as2_motion_reference_handlers/hover_motion.hpp>
+#include <as2_motion_reference_handlers/position_motion.hpp>
+#include <as2_msgs/msg/platform_info.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+
+#include "circle_behavior/action/circle.hpp"
+
+class CircleBehavior : public as2_behavior::BehaviorServer<circle_behavior::action::Circle>
+{
+public:
+  using Circle = circle_behavior::action::Circle;
+
+  CircleBehavior();
+
+protected:
+  bool on_activate(std::shared_ptr<const Circle::Goal> goal) override;
+  bool on_modify(std::shared_ptr<const Circle::Goal> goal) override;
+  bool on_deactivate(const std::shared_ptr<std::string> & message) override;
+  bool on_pause(const std::shared_ptr<std::string> & message) override;
+  bool on_resume(const std::shared_ptr<std::string> & message) override;
+  as2_behavior::ExecutionStatus on_run(
+    const std::shared_ptr<const Circle::Goal> & goal,
+    std::shared_ptr<Circle::Feedback> & feedback_msg,
+    std::shared_ptr<Circle::Result> & result_msg) override;
+  void on_execution_end(const as2_behavior::ExecutionStatus & state) override;
+
+private:
+  bool is_valid(const Circle::Goal & goal);
+
+  as2::motionReferenceHandlers::PositionMotion position_handler_;
+  as2::motionReferenceHandlers::HoverMotion hover_handler_;
+
+  rclcpp::Subscription<as2_msgs::msg::PlatformInfo>::SharedPtr platform_info_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
+
+  bool flying_ = false;
+  bool has_pose_ = false;
+  geometry_msgs::msg::PoseStamped pose_;
+
+  Circle::Goal goal_;          // The goal being flown, updated by modify
+  double center_x_ = 0.0;
+  double center_y_ = 0.0;
+  double height_ = 0.0;
+  double angle_ = 0.0;         // Angle flown so far, in radians
+  rclcpp::Time last_time_;
+};
+
+#endif  // CIRCLE_BEHAVIOR__CIRCLE_BEHAVIOR_HPP_
+```
+
+</Step>
+<Step>
+
+### Implement it
+
+```cpp title="circle_behavior/src/circle_behavior.cpp"
+#include "circle_behavior/circle_behavior.hpp"
+
+#include <cmath>
+
+#include <as2_core/names/topics.hpp>
+#include <as2_msgs/msg/platform_status.hpp>
+
+CircleBehavior::CircleBehavior()
+: as2_behavior::BehaviorServer<Circle>("CircleBehavior"),
+  position_handler_(this),
+  hover_handler_(this)
+{
+  platform_info_sub_ = this->create_subscription<as2_msgs::msg::PlatformInfo>(
+    as2_names::topics::platform::info, as2_names::topics::platform::qos,
+    [this](const as2_msgs::msg::PlatformInfo & msg) {
+      flying_ = msg.status.state == as2_msgs::msg::PlatformStatus::FLYING;
+    });
+
+  pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+    as2_names::topics::self_localization::pose, as2_names::topics::self_localization::qos,
+    [this](const geometry_msgs::msg::PoseStamped & msg) {
+      pose_ = msg;
+      has_pose_ = true;
+    });
+}
+
+bool CircleBehavior::is_valid(const Circle::Goal & goal)
+{
+  if (goal.radius <= 0.0f || goal.speed <= 0.0f || goal.laps <= 0) {
+    RCLCPP_ERROR(this->get_logger(), "Radius, speed and laps must be greater than 0");
+    return false;
+  }
+  return true;
+}
+
+bool CircleBehavior::on_activate(std::shared_ptr<const Circle::Goal> goal)
+{
+  if (!is_valid(*goal)) {
+    return false;
+  }
+  if (!flying_ || !has_pose_) {
+    RCLCPP_ERROR(this->get_logger(), "The drone must be flying and localized");
+    return false;
+  }
+
+  // Put the center one radius away along -x, so the circle starts where the drone is
+  goal_ = *goal;
+  center_x_ = pose_.pose.position.x - goal_.radius;
+  center_y_ = pose_.pose.position.y;
+  height_ = pose_.pose.position.z;
+  angle_ = 0.0;
+  last_time_ = this->now();
+
+  RCLCPP_INFO(
+    this->get_logger(), "Flying a %.1f m circle at %.1f m/s", goal_.radius, goal_.speed);
+  return true;
+}
+
+bool CircleBehavior::on_modify(std::shared_ptr<const Circle::Goal> goal)
+{
+  if (!is_valid(*goal)) {
+    return false;
+  }
+  goal_ = *goal;
+  RCLCPP_INFO(
+    this->get_logger(), "Circle changed to %.1f m at %.1f m/s", goal_.radius, goal_.speed);
+  return true;
+}
+
+bool CircleBehavior::on_deactivate(const std::shared_ptr<std::string> & message)
+{
+  hover_handler_.sendHover();
+  *message = "Circle stopped";
+  return true;
+}
+
+bool CircleBehavior::on_pause(const std::shared_ptr<std::string> & message)
+{
+  hover_handler_.sendHover();
+  *message = "Circle paused";
+  return true;
+}
+
+bool CircleBehavior::on_resume(const std::shared_ptr<std::string> & message)
+{
+  // Don't count the time spent paused
+  last_time_ = this->now();
+  *message = "Circle resumed";
+  return true;
+}
+
+as2_behavior::ExecutionStatus CircleBehavior::on_run(
+  const std::shared_ptr<const Circle::Goal> & /*goal*/,
+  std::shared_ptr<Circle::Feedback> & feedback_msg,
+  std::shared_ptr<Circle::Result> & result_msg)
+{
+  // Move along the circle by the distance flown since the last cycle
+  const rclcpp::Time now = this->now();
+  angle_ += goal_.speed / goal_.radius * (now - last_time_).seconds();
+  last_time_ = now;
+
+  feedback_msg->laps_done = angle_ / (2.0 * M_PI);
+  if (feedback_msg->laps_done >= goal_.laps) {
+    result_msg->circle_success = true;
+    return as2_behavior::ExecutionStatus::SUCCESS;
+  }
+
+  const double x = center_x_ + goal_.radius * std::cos(angle_);
+  const double y = center_y_ + goal_.radius * std::sin(angle_);
+  const double yaw = angle_ + M_PI / 2.0;  // Face along the circle
+
+  if (!position_handler_.sendPositionCommandWithYawAngle(
+      this->getEarthFrameId(), x, y, height_, yaw,
+      this->getEarthFrameId(), goal_.speed, goal_.speed, goal_.speed))
+  {
+    result_msg->circle_success = false;
+    return as2_behavior::ExecutionStatus::FAILURE;
+  }
+  return as2_behavior::ExecutionStatus::RUNNING;
+}
+
+void CircleBehavior::on_execution_end(const as2_behavior::ExecutionStatus & state)
+{
+  // Whatever happened, hold the drone where it is
+  hover_handler_.sendHover();
+  RCLCPP_INFO(
+    this->get_logger(), "Circle ended %s",
+    state == as2_behavior::ExecutionStatus::SUCCESS ? "successfully" : "early");
+}
+```
+
+What each part does:
+
+- **The constructor** names the behavior `CircleBehavior`. The topic names and their QoS come from
+  `as2_core`, and are relative, so they follow the node's namespace.
+- **`on_activate`** rejects goals that make no sense, and goals sent while the drone isn't flying.
+  Then it keeps the goal and places the circle so that it starts at the drone.
+- **`on_run`** moves a position setpoint along the circle, by the distance flown since the last
+  cycle. It reads the goal from `goal_`, so a modify takes effect on the next cycle.
+- **`on_pause`** hovers. The server stops calling `on_run` while paused, so `on_resume` only resets
+  the clock.
+- **`on_deactivate`** and **`on_execution_end`** hover, so the drone holds where it is once the
+  circle stops.
+
+The setpoint is in `earth`, the frame `self_localization/pose` is published in. The speed passed
+with it is a limit, which keeps the drone from rushing to a setpoint that jumps, like after a modify
+of the radius.
+
+`main` only spins the node:
+
+```cpp title="circle_behavior/src/circle_behavior_node.cpp"
+#include <memory>
+
+#include <rclcpp/rclcpp.hpp>
+
+#include "circle_behavior/circle_behavior.hpp"
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<CircleBehavior>());
+  rclcpp::shutdown();
+  return 0;
+}
+```
+
+</Step>
+<Step>
+
+### Add the Python module
+
+`drone.load_module("circle")` looks for a file called `circle_module.py`. It looks in the modules of
+`as2_python_api` first, then in each folder of the `AS2_MODULES_PATH` environment variable. It
+imports the file and adds the module class to the drone under its `__alias__`.
+
+```python title="circle_behavior/modules/circle_module.py"
+"""Python API module for the circle behavior."""
+
+from typing import TYPE_CHECKING
+
+from as2_python_api.behavior_actions.behavior_handler import BehaviorHandler
+from as2_python_api.modules.module_base import ModuleBase
+from circle_behavior.action import Circle
+
+if TYPE_CHECKING:
+    from as2_python_api.drone_interface import DroneInterface
+
+
+class CircleBehavior(BehaviorHandler):
+    """Client for the CircleBehavior action and its services."""
+
+    def __init__(self, drone: 'DroneInterface') -> None:
+        super().__init__(drone, Circle, 'CircleBehavior')
+
+
+class CircleModule(ModuleBase, CircleBehavior):
+    """Fly circles, as drone.circle(...)."""
+
+    __alias__ = 'circle'
+
+    def __init__(self, drone: 'DroneInterface') -> None:
+        super().__init__(drone, self.__alias__)
+
+    def __call__(self, radius: float, speed: float, laps: int = 1, wait: bool = True) -> bool:
+        """Fly laps around a point one radius away from the drone."""
+        goal = Circle.Goal(radius=float(radius), speed=float(speed), laps=int(laps))
+        try:
+            return self.start(goal, wait)
+        except self.GoalRejected:
+            return False
+
+    def modify(self, radius: float, speed: float, laps: int) -> bool:
+        """Change the circle while it's flown."""
+        goal = Circle.Goal(radius=float(radius), speed=float(speed), laps=int(laps))
+        return super().modify(goal)
+```
+
+`BehaviorHandler` is the client side of every behavior. It connects to the action and the
+`_behavior` services by name, relative to the drone's namespace, and provides `start`, `pause`,
+`resume`, `stop`, `modify`, `feedback` and `status`. `CircleBehavior` only gives it the action type
+and the name. `CircleModule` adds the calls a mission makes, built from plain arguments.
+
+`load_module` finds the class by its name, so the file must have exactly one class with `Module` in
+its name, besides `ModuleBase`. If the behavior isn't running, `load_module` raises
+`BehaviorNotAvailable` after waiting a second.
+
+With colcon, an environment hook adds the installed `modules` folder to `AS2_MODULES_PATH` when you
+source the workspace:
+
+```text title="circle_behavior/env-hooks/circle_behavior.dsv.in"
+prepend-non-duplicate;AS2_MODULES_PATH;share/@PROJECT_NAME@/modules
+```
+
+</Step>
+<Step>
+
+### Describe the package
+
+The package builds the action and the node, and installs the module with its hook:
+
+```xml title="circle_behavior/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>circle_behavior</name>
+  <version>0.1.0</version>
+  <description>A behavior that flies the drone in circles.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>as2_core</depend>
+  <depend>as2_msgs</depend>
+  <depend>as2_behavior</depend>
+  <depend>as2_motion_reference_handlers</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <exec_depend>as2_python_api</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake title="circle_behavior/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(circle_behavior)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(as2_core REQUIRED)
+find_package(as2_msgs REQUIRED)
+find_package(as2_behavior REQUIRED)
+find_package(as2_motion_reference_handlers REQUIRED)
+
+# Generate the C++ and Python code for the action
+rosidl_generate_interfaces(${PROJECT_NAME} "action/Circle.action")
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
+
+add_executable(circle_behavior_node src/circle_behavior.cpp src/circle_behavior_node.cpp)
+target_include_directories(circle_behavior_node PRIVATE include)
+ament_target_dependencies(circle_behavior_node
+  rclcpp geometry_msgs as2_core as2_msgs as2_behavior as2_motion_reference_handlers)
+target_link_libraries(circle_behavior_node "${cpp_typesupport_target}")
+
+install(TARGETS circle_behavior_node DESTINATION lib/${PROJECT_NAME})
+
+# The Python API module, and a hook that adds its folder to AS2_MODULES_PATH
+install(FILES modules/circle_module.py DESTINATION share/${PROJECT_NAME}/modules)
+ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/env-hooks/${PROJECT_NAME}.dsv.in")
+
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
+```
+
+`rosidl_get_typesupport_target` lets the node use the action generated in its own package.
+
+</Step>
+<Step>
+
+### Build
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+```bash
+cd ~/aerostack2_ws
+colcon build --packages-select circle_behavior
+source install/setup.bash
+```
+
+Sourcing the workspace runs the hook, so `AS2_MODULES_PATH` now holds the module's folder.
+
+</Tab>
+<Tab value="Pixi">
+
+Give the package a `pixi.toml`, with a mapping for each Aerostack2 package in its `package.xml`, as
+[Your project with Pixi](/docs/develop/pixi-project#tell-pixi-how-to-build-it) explains:
+
+```toml title="circle_behavior/pixi.toml"
+[package]
+name = "circle_behavior"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{
+  as2_behavior = { conda = ["as2_behavior"] },
+  as2_core = { conda = ["as2_core"] },
+  as2_motion_reference_handlers = { conda = ["as2_motion_reference_handlers"] },
+  as2_msgs = { conda = ["as2_msgs"] },
+  as2_python_api = { conda = ["as2_python_api"] },
+}]
+```
+
+Pixi doesn't run the package's environment hooks, so set `AS2_MODULES_PATH` in the workspace's
+`pixi.toml`, next to the path dependency:
+
+```toml title="pixi.toml"
+[dependencies]
+circle_behavior = { path = "circle_behavior" }
+
+[activation.env]
+AS2_MODULES_PATH = "$CONDA_PREFIX/share/circle_behavior/modules"
+```
+
+Separate several folders with `:`. Then build:
+
+```bash
+pixi install
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Run it
+
+Start the drone, as in the [Quickstart](/docs/getting-started/quickstart). With Pixi, your package
+must be in the same workspace as the drone, as [Fly with it](/docs/develop/pixi-project#fly-with-it)
+shows. Then start the behavior in the drone's namespace:
+
+```bash tab="colcon"
+ros2 run circle_behavior circle_behavior_node --ros-args -r __ns:=/drone0
+```
+
+```bash tab="Pixi"
+pixi run ros2 run circle_behavior circle_behavior_node --ros-args -r __ns:=/drone0
+```
+
+</Step>
+<Step>
+
+### Fly it from a mission
+
+The mission loads the module by its name, flies one lap and waits for it, then starts three laps
+and stops them early:
+
+```python title="circle_mission.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+drone.load_module("circle")
+
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.5, speed=0.5)
+
+# One lap, waiting until it's done
+print("Circle succeeded:", drone.circle(radius=2.0, speed=1.0, laps=1))
+
+# Three laps without waiting, stopped after five seconds
+drone.circle(radius=1.0, speed=1.0, laps=3, wait=False)
+time.sleep(5.0)
+print(f"Stopping after {drone.circle.feedback.laps_done:.2f} laps")
+drone.circle.stop()
+
+drone.land(speed=0.5)
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```bash tab="colcon"
+python3 circle_mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 circle_mission.py
+```
+
+The mission prints:
+
+```console noCopy
+Circle succeeded: True
+Stopping after 0.68 laps
+```
+
+The behavior logs each request. Shortened, it reads:
+
+```console noCopy
+[INFO] [drone0.CircleBehavior]: START
+[INFO] [drone0.CircleBehavior]: Flying a 2.0 m circle at 1.0 m/s
+[INFO] [drone0.CircleBehavior]: RUNNING
+[INFO] [drone0.CircleBehavior]: SUCCESS
+[INFO] [drone0.CircleBehavior]: Circle ended successfully
+[INFO] [drone0.CircleBehavior]: START
+[INFO] [drone0.CircleBehavior]: Flying a 1.0 m circle at 1.0 m/s
+[INFO] [drone0.CircleBehavior]: RUNNING
+[INFO] [drone0.CircleBehavior]: STOP
+[INFO] [drone0.CircleBehavior]: Circle ended early
+```
+
+</Step>
+</Steps>
+
+## Call it without Python
+
+The behavior is plain ROS 2, so the command line can drive it too. While the drone flies, send a
+goal and watch the feedback:
+
+```bash
+ros2 action send_goal --feedback /drone0/CircleBehavior circle_behavior/action/Circle \
+  "{radius: 1.0, speed: 1.0, laps: 1}"
+```
+
+```console noCopy
+Goal accepted with ID: 26ca500ee1f74ed38af66e82b897f98f
+
+Feedback:
+    laps_done: 0.016432667151093483
+
+Feedback:
+    laps_done: 0.03199483081698418
+
+...
+
+Result:
+    circle_success: true
+
+Goal finished with status: SUCCEEDED
+```
+
+Sent while the drone is on the ground, the same goal ends with `Goal was rejected.`, and the
+behavior logs why. The services work the same way:
+
+```bash
+ros2 service call /drone0/CircleBehavior/_behavior/stop std_srvs/srv/Trigger
+```
+
+```console noCopy
+response:
+std_srvs.srv.Trigger_Response(success=True, message='Circle stopped')
+```
+
+The `_behavior` services are hidden, so `ros2 service list` only shows them with
+`--include-hidden-services`.
+
+## Use it in a mission plan
+
+The [mission interpreter](/docs/concepts/missions#mission-interpreter) loads modules by name too,
+so a JSON plan can use the behavior once `AS2_MODULES_PATH` finds it. The arguments are those of
+the module's `__call__`:
+
+```json
+{"behavior": "circle", "args": {"radius": 1.0, "speed": 1.0, "laps": 1}}
+```
+
+Behavior trees are different. The `as2_behavior_tree` runner registers its node types in its own
+code, so a tree can't call a new behavior without a runner of your own. Its
+[`BtActionNode`](https://github.com/aerostack2/aerostack2/blob/main/as2_behavior_tree/include/as2_behavior_tree/bt_action_node.hpp)
+template and the [action nodes](https://github.com/aerostack2/aerostack2/tree/main/as2_behavior_tree/include/as2_behavior_tree/action)
+built on it show how to wrap a behavior's action in a tree node.
+
+## Contribute it to Aerostack2
+
+A behavior that ships with Aerostack2 follows the layout in
+[Creating a package](/docs/develop/new-package), with a few differences:
+
+- The package lives in `as2_behaviors`, and its name starts with `as2_behaviors_`.
+- The action goes in `as2_msgs/action`, next to the others.
+- The module goes in `as2_python_api/as2_python_api/modules`, where `load_module` finds it without
+  `AS2_MODULES_PATH`. Its behavior client goes in `behavior_actions`, next to the modules.
+
+## Real implementations
+
+- [`behavior_server__impl.hpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behavior/include/as2_behavior/__impl/behavior_server__impl.hpp)
+  is the server itself, and shows when each method is called.
+- [`point_gimbal_behavior`](https://github.com/aerostack2/aerostack2/tree/main/as2_behaviors/as2_behaviors_payload/point_gimbal_behavior)
+  is a complete behavior without plugins, with its launch file and configuration.
+- [`go_to_behavior`](https://github.com/aerostack2/aerostack2/tree/main/as2_behaviors/as2_behaviors_motion/go_to_behavior)
+  loads its algorithm as a plugin, like the other motion behaviors.
+- [`point_gimbal_module.py`](https://github.com/aerostack2/aerostack2/blob/main/as2_python_api/as2_python_api/modules/point_gimbal_module.py)
+  and [`behavior_handler.py`](https://github.com/aerostack2/aerostack2/blob/main/as2_python_api/as2_python_api/behavior_actions/behavior_handler.py)
+  are the Python side.
+
+## Next steps
+
+<Cards>
+  <Card title="Follow reference plugin" href="/docs/develop/follow-reference-plugin" description="Change how an existing behavior does its job, without writing a new one." />
+  <Card title="Python mission" href="/docs/tutorials/python-mission" description="More of what a mission can do with a behavior once it's loaded." />
+</Cards>

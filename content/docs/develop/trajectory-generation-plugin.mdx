@@ -1,8 +1,635 @@
 ---
 title: Trajectory Generation Plugin
+description: Write a planner for the trajectory generator behavior, and fly go to and follow path through it.
 icon: Spline
 ---
 
-<Callout type="warn" title="Not written yet">
-  Port the content from `docs/_09_development/_tutorials/_tutorials/trajectory_generation_plugin.rst`.
+The [trajectory generator](/docs/plugins/trajectory-generators) behavior turns waypoints into a
+trajectory and streams it to the motion controller. The behavior does all the ROS 2 work, and a
+plugin only does the math. This guide builds `straight_line_trajectory_generator`, which flies
+straight lines between the waypoints at the goal's speed.
+
+It's the simplest planner there is. The speed jumps at the start and at every corner, which the
+controller smooths out in simulation. For real flights, use one of the
+[built-in plugins](/docs/plugins/trajectory-generators#choosing-a-plugin).
+
+## Before you start
+
+- **A workspace to build in.** Either a colcon workspace with Aerostack2, from
+  [Installation](/docs/getting-started/installation), or a Pixi workspace like the one in
+  [Your project with Pixi](/docs/develop/pixi-project).
+- **A drone to fly.** The simulated drone from the [Quickstart](/docs/getting-started/quickstart) is
+  enough.
+- **Behaviors.** [Writing a behavior](/docs/develop/behavior) explains the behavior server that
+  the trajectory generator is built on.
+
+## What the behavior does for you
+
+The behavior reads its `plugin_name` parameter, adds `::Plugin` to it and asks pluginlib for that
+class. pluginlib looks for it in every package that registers plugins for
+`as2_behaviors_trajectory_generation`. So the plugin is a class called `Plugin`, in a namespace named
+like the plugin, and it inherits from
+`generate_polynomial_trajectory_behavior_plugin_base::GeneratePolynomialTrajectoryBase`.
+
+Everything outside the math stays in the behavior:
+
+- **Frames.** It converts the waypoints to the planning frame, the drone's `odom` unless
+  `desired_frame_id` says otherwise. It also hands the plugin the drone's pose and speed in that
+  frame.
+- **Yaw.** It works out the yaw of every reference from the goal's yaw mode, so the plugin only
+  plans position.
+- **Sampling.** On every cycle it asks the plugin for `sampling_n` points, `sampling_dt` apart, and
+  sends them to the controller.
+- **The goal's life.** It handles modify, pause and resume, and the `path_length` window. A resume
+  plans again from where the drone is.
+- **Short goals.** A single waypoint less than 5 cm away never reaches the plugin. The behavior
+  holds the drone there itself.
+
+## The time axis
+
+The behavior keeps its own trajectory time, in seconds. It starts at 0 with every new trajectory,
+and grows on every cycle. Each call that plans gets the current value as `t_trajectory_now`, and
+each call that reads the trajectory gets a time on the same axis.
+
+The plugin maps that time to its own trajectory, usually by keeping the time it started at. On a
+fresh goal `t_trajectory_now` is 0. When the behavior plans again in the middle of a goal, as after
+a modify, it isn't.
+
+## The plugin contract
+
+| Method | Must override | What it does |
+| --- | --- | --- |
+| `generateTrajectory(waypoints, max_speed, t_trajectory_now)` | Yes | Plans a new trajectory from the drone's state through the waypoints. Returning `false` rejects the goal |
+| `evaluate(t_trajectory, out, is_horizon_sample)` | Yes | Fills the position, velocity and acceleration at a time. Past the end, it gives the last point |
+| `isFinished(t_trajectory)` | Yes | Whether that time is past the end. The goal succeeds when it is |
+| `getDuration()` | Yes | How long the trajectory lasts, for logs and feedback |
+| `isTrajectoryGenerated()` | Yes | Whether there's a trajectory to read |
+| `reset()` | Yes | Drops the trajectory. Called on a pause and when a goal ends |
+| `getNextWaypointId()` | Yes | The id of the next waypoint, or an empty string past the last one. The behavior reports it as feedback, and picks up from it after a pause or a modify |
+| `updateWaypoints(waypoints, max_speed, t_trajectory_now)` | No | Replaces the pending waypoints. The default calls `reset` and `generateTrajectory` |
+| `consumeRegeneratedFlag()` | No | For plugins that plan in the background. The default returns `false` |
+| `ownInitialize()` | No | Called once when the plugin is loaded. Read parameters here |
+
+`evaluate` is called once with `is_horizon_sample` false for the reference the drone flies now,
+then with `true` for the points ahead of it and for debugging. Only the first call should move the
+plugin's state on, like the next waypoint.
+
+The base gives the plugin these members:
+
+| Member | What it holds |
+| --- | --- |
+| `vehicle_pose_`, `vehicle_twist_` | The drone's latest pose and speed, in the planning frame |
+| `getParameter<T>(name, default)` | Reads a parameter called `<plugin_name>.<name>` from the behavior's node |
+| `buildCurrentWaypoint()` | The drone's pose as a waypoint with the id `current`, for planners that start from a waypoint |
+| `node_ptr_` | The behavior's node, an `as2::Node`, for logging |
+
+## Write the plugin
+
+<Steps>
+<Step>
+
+### Create the package
+
+Make the package's folders in your workspace. With colcon, that's `~/aerostack2_ws/src`. With
+Pixi, it's the workspace folder.
+
+```bash
+mkdir -p straight_line_trajectory_generator/{config,include/straight_line_trajectory_generator,src}
+```
+
+By the end of the guide it holds these files:
+
+<FileTree>
+  <TreeFolder name="straight_line_trajectory_generator">
+    <TreeFile name="CMakeLists.txt" />
+    <TreeFile name="package.xml" />
+    <TreeFile name="pixi.toml" note="Only with Pixi" />
+    <TreeFile name="plugins.xml" note="Registers the plugin with pluginlib" />
+    <TreeFolder name="config">
+      <TreeFile name="straight_line_trajectory_generator.yaml" note="The plugin's parameters" />
+    </TreeFolder>
+    <TreeFolder name="include">
+      <TreeFolder name="straight_line_trajectory_generator">
+        <TreeFile name="straight_line_trajectory_generator.hpp" />
+      </TreeFolder>
+    </TreeFolder>
+    <TreeFolder name="src">
+      <TreeFile name="straight_line_trajectory_generator.cpp" />
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+</Step>
+<Step>
+
+### Declare the plugin
+
+The trajectory is a list of segments, one from the drone to the first waypoint and one between each
+pair of waypoints. Each segment knows when it starts and ends:
+
+```cpp title="straight_line_trajectory_generator/include/straight_line_trajectory_generator/straight_line_trajectory_generator.hpp"
+#ifndef STRAIGHT_LINE_TRAJECTORY_GENERATOR__STRAIGHT_LINE_TRAJECTORY_GENERATOR_HPP_
+#define STRAIGHT_LINE_TRAJECTORY_GENERATOR__STRAIGHT_LINE_TRAJECTORY_GENERATOR_HPP_
+
+#include <string>
+#include <vector>
+
+#include <Eigen/Dense>
+#include <generate_polynomial_trajectory_behavior/generate_polynomial_trajectory_base.hpp>
+
+namespace straight_line_trajectory_generator
+{
+
+class Plugin : public generate_polynomial_trajectory_behavior_plugin_base::
+  GeneratePolynomialTrajectoryBase
+{
+public:
+  bool generateTrajectory(
+    const std::vector<as2_msgs::msg::PoseStampedWithID> & waypoints,
+    double max_speed, double t_trajectory_now) override;
+  bool evaluate(
+    double t_trajectory, as2_msgs::msg::TrajectoryPoint & out,
+    bool is_horizon_sample) override;
+  bool isFinished(double t_trajectory) const override;
+  double getDuration() const override;
+  bool isTrajectoryGenerated() override;
+  void reset() override;
+  std::string getNextWaypointId() override;
+
+protected:
+  void ownInitialize() override;
+
+private:
+  struct Segment
+  {
+    Eigen::Vector3d start;
+    Eigen::Vector3d end;
+    double t_start;   // Time the segment starts, from the start of the trajectory
+    double t_end;
+    std::string id;   // Id of the waypoint it ends at
+  };
+
+  double speed_factor_ = 1.0;
+  std::vector<Segment> segments_;
+  double t_offset_ = 0.0;  // Host time at which the trajectory starts
+  std::string next_id_;
+};
+
+}  // namespace straight_line_trajectory_generator
+
+#endif  // STRAIGHT_LINE_TRAJECTORY_GENERATOR__STRAIGHT_LINE_TRAJECTORY_GENERATOR_HPP_
+```
+
+</Step>
+<Step>
+
+### Implement it
+
+```cpp title="straight_line_trajectory_generator/src/straight_line_trajectory_generator.cpp"
+#include "straight_line_trajectory_generator/straight_line_trajectory_generator.hpp"
+
+#include <algorithm>
+#include <iterator>
+
+#include <pluginlib/class_list_macros.hpp>
+
+namespace straight_line_trajectory_generator
+{
+
+void Plugin::ownInitialize()
+{
+  // Read as straight_line_trajectory_generator.speed_factor
+  speed_factor_ = getParameter<double>("speed_factor", 1.0);
+}
+
+bool Plugin::generateTrajectory(
+  const std::vector<as2_msgs::msg::PoseStampedWithID> & waypoints,
+  double max_speed, double t_trajectory_now)
+{
+  const double speed = max_speed * speed_factor_;
+  if (waypoints.empty() || speed <= 0.0) {
+    return false;
+  }
+
+  // One segment from the drone to the first waypoint, then one between each pair
+  reset();
+  const auto & position = vehicle_pose_.pose.position;
+  Eigen::Vector3d start(position.x, position.y, position.z);
+  double t = 0.0;
+  for (const auto & waypoint : waypoints) {
+    const auto & p = waypoint.pose.pose.position;
+    const Eigen::Vector3d end(p.x, p.y, p.z);
+    const double duration = (end - start).norm() / speed;
+    segments_.push_back({start, end, t, t + duration, waypoint.id});
+    start = end;
+    t += duration;
+  }
+
+  // The host's time is t_trajectory_now when the trajectory starts
+  t_offset_ = t_trajectory_now;
+  next_id_ = segments_.front().id;
+  return true;
+}
+
+bool Plugin::evaluate(
+  double t_trajectory, as2_msgs::msg::TrajectoryPoint & out, bool is_horizon_sample)
+{
+  if (segments_.empty()) {
+    return false;
+  }
+
+  // Times past the end give the last point
+  const double t = std::clamp(t_trajectory - t_offset_, 0.0, getDuration());
+  auto segment = std::find_if(
+    segments_.begin(), segments_.end(), [t](const Segment & s) {return t < s.t_end;});
+  const bool finished = segment == segments_.end();
+  if (finished) {
+    segment = std::prev(segments_.end());
+  }
+
+  const double duration = segment->t_end - segment->t_start;
+  const double fraction = duration > 0.0 ? (t - segment->t_start) / duration : 1.0;
+  const Eigen::Vector3d position =
+    segment->start + std::min(fraction, 1.0) * (segment->end - segment->start);
+  const Eigen::Vector3d velocity = finished || duration <= 0.0 ?
+    Eigen::Vector3d::Zero() : Eigen::Vector3d((segment->end - segment->start) / duration);
+
+  out.position.x = position.x();
+  out.position.y = position.y();
+  out.position.z = position.z();
+  out.twist.x = velocity.x();
+  out.twist.y = velocity.y();
+  out.twist.z = velocity.z();
+  out.acceleration.x = 0.0;
+  out.acceleration.y = 0.0;
+  out.acceleration.z = 0.0;
+
+  // Only the live sample moves the trajectory on, not the look-ahead ones
+  if (!is_horizon_sample) {
+    next_id_ = finished ? "" : segment->id;
+  }
+  return true;
+}
+
+bool Plugin::isFinished(double t_trajectory) const
+{
+  return t_trajectory - t_offset_ >= getDuration();
+}
+
+double Plugin::getDuration() const
+{
+  return segments_.empty() ? 0.0 : segments_.back().t_end;
+}
+
+bool Plugin::isTrajectoryGenerated()
+{
+  return !segments_.empty();
+}
+
+void Plugin::reset()
+{
+  segments_.clear();
+  next_id_.clear();
+  t_offset_ = 0.0;
+}
+
+std::string Plugin::getNextWaypointId()
+{
+  return next_id_;
+}
+
+}  // namespace straight_line_trajectory_generator
+
+PLUGINLIB_EXPORT_CLASS(
+  straight_line_trajectory_generator::Plugin,
+  generate_polynomial_trajectory_behavior_plugin_base::GeneratePolynomialTrajectoryBase)
+```
+
+What each part does:
+
+- **`ownInitialize`** reads `speed_factor`. `getParameter` adds the plugin's name, so the parameter
+  is `straight_line_trajectory_generator.speed_factor` on the behavior's node.
+- **`generateTrajectory`** starts the first segment at `vehicle_pose_`, the drone's position in the
+  planning frame. Each segment lasts its length divided by the speed. It keeps `t_trajectory_now` as
+  the offset that maps the behavior's time to its own.
+- **`evaluate`** finds the segment for a time and interpolates along it. The velocity is constant on
+  a segment and 0 once the trajectory ends. It only moves `next_id_` on for the live sample.
+- **`isFinished`** and **`getDuration`** use the end of the last segment.
+
+The plugin doesn't override `updateWaypoints`. Its default plans again from the drone's state, so
+modify and the `path_length` window work without more code.
+
+</Step>
+<Step>
+
+### Register the plugin
+
+`plugins.xml` tells pluginlib which library holds the class:
+
+```xml title="straight_line_trajectory_generator/plugins.xml"
+<library path="straight_line_trajectory_generator">
+  <class type="straight_line_trajectory_generator::Plugin"
+         base_class_type="generate_polynomial_trajectory_behavior_plugin_base::GeneratePolynomialTrajectoryBase">
+    <description>Straight lines between the waypoints, at constant speed.</description>
+  </class>
+</library>
+```
+
+</Step>
+<Step>
+
+### Describe the package
+
+```xml title="straight_line_trajectory_generator/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>straight_line_trajectory_generator</name>
+  <version>0.1.0</version>
+  <description>A trajectory generator that flies straight lines between waypoints at constant speed.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>pluginlib</depend>
+  <depend>eigen</depend>
+  <depend>as2_core</depend>
+  <depend>as2_msgs</depend>
+  <depend>as2_behaviors_trajectory_generation</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake title="straight_line_trajectory_generator/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(straight_line_trajectory_generator)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(as2_core REQUIRED)
+find_package(as2_msgs REQUIRED)
+find_package(as2_behaviors_trajectory_generation REQUIRED)
+
+# as2_behaviors_trajectory_generation doesn't export the plugin base class,
+# so look for its header and library in the prefix it's installed in
+get_filename_component(TRAJECTORY_GENERATION_PREFIX
+  "${as2_behaviors_trajectory_generation_DIR}/../../.." ABSOLUTE)
+find_library(PLUGIN_BASE_LIBRARY generate_polynomial_trajectory_behavior_plugin_base
+  PATHS "${TRAJECTORY_GENERATION_PREFIX}/lib" NO_DEFAULT_PATH)
+
+add_library(${PROJECT_NAME} SHARED src/straight_line_trajectory_generator.cpp)
+target_include_directories(${PROJECT_NAME} PRIVATE
+  include
+  "${TRAJECTORY_GENERATION_PREFIX}/include")
+target_link_libraries(${PROJECT_NAME} ${PLUGIN_BASE_LIBRARY} Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME} pluginlib as2_core as2_msgs)
+
+install(TARGETS ${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+
+# Register the plugin for the base class that lives in as2_behaviors_trajectory_generation
+pluginlib_export_plugin_description_file(as2_behaviors_trajectory_generation plugins.xml)
+
+ament_package()
+```
+
+Two parts need a word:
+
+- **The base class.** `as2_behaviors_trajectory_generation` installs the header and the library of
+  the plugin base, but doesn't export them to CMake. So the package finds them next to the package's
+  CMake files, in the prefix it's installed in.
+- **`pluginlib_export_plugin_description_file`** names `as2_behaviors_trajectory_generation`, the
+  package that loads the plugin, not this one. That's how the behavior finds it.
+
+</Step>
+<Step>
+
+### Configure the plugin
+
+The file sets the plugin name, and the plugin's own parameters under its name:
+
+```yaml title="straight_line_trajectory_generator/config/straight_line_trajectory_generator.yaml"
+/**:
+  ros__parameters:
+    plugin_name: "straight_line_trajectory_generator"
+    straight_line_trajectory_generator:
+      speed_factor: 1.0
+```
+
+The behavior's other parameters come from its own `config_default.yaml`, loaded before this file
+when you run it.
+
+</Step>
+<Step>
+
+### Build
+
+<Tabs items={["colcon", "Pixi"]}>
+<Tab value="colcon">
+
+```bash
+cd ~/aerostack2_ws
+colcon build --packages-select straight_line_trajectory_generator
+source install/setup.bash
+```
+
+</Tab>
+<Tab value="Pixi">
+
+Give the package a `pixi.toml`, with a mapping for each Aerostack2 package in its `package.xml`, as
+[Your project with Pixi](/docs/develop/pixi-project#tell-pixi-how-to-build-it) explains:
+
+```toml title="straight_line_trajectory_generator/pixi.toml"
+[package]
+name = "straight_line_trajectory_generator"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{
+  as2_behaviors_trajectory_generation = { conda = ["as2_behaviors_trajectory_generation"] },
+  as2_core = { conda = ["as2_core"] },
+  as2_msgs = { conda = ["as2_msgs"] },
+}]
+```
+
+Add it to the workspace's `pixi.toml` and build:
+
+```toml title="pixi.toml"
+[dependencies]
+straight_line_trajectory_generator = { path = "straight_line_trajectory_generator" }
+```
+
+```bash
+pixi install
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Run the behavior with it
+
+Start the drone, as in the [Quickstart](/docs/getting-started/quickstart), with two changes:
+
+- **Fly go to and follow path through the trajectory generator.** Set `go_to_plugin_name` to
+  `go_to_plugin_trajectory` and `follow_path_plugin_name` to `follow_path_plugin_trajectory`. The
+  multirotor simulator project has both in `config/config.yaml`, commented out.
+- **Don't start the stock trajectory generator.** In the project, it's a pane of the `behaviors`
+  window. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+
+With Pixi, your package must be in the same workspace as the drone, as
+[Fly with it](/docs/develop/pixi-project#fly-with-it) shows. Then start the behavior with the
+default configuration and yours:
+
+```bash tab="colcon"
+ros2 run as2_behaviors_trajectory_generation generate_polynomial_trajectory_behavior_node \
+  --ros-args -r __ns:=/drone0 \
+  --params-file $(ros2 pkg prefix --share as2_behaviors_trajectory_generation)/generate_polynomial_trajectory_behavior/config/config_default.yaml \
+  --params-file $(ros2 pkg prefix --share straight_line_trajectory_generator)/config/straight_line_trajectory_generator.yaml
+```
+
+```bash tab="Pixi"
+pixi run bash -c 'ros2 run as2_behaviors_trajectory_generation generate_polynomial_trajectory_behavior_node \
+  --ros-args -r __ns:=/drone0 \
+  --params-file $(ros2 pkg prefix --share as2_behaviors_trajectory_generation)/generate_polynomial_trajectory_behavior/config/config_default.yaml \
+  --params-file $(ros2 pkg prefix --share straight_line_trajectory_generator)/config/straight_line_trajectory_generator.yaml'
+```
+
+The behavior logs the plugin it loaded:
+
+```console noCopy
+[INFO] [drone0.TrajectoryGeneratorBehavior]: Trajectory generator plugin loaded: straight_line_trajectory_generator
+```
+
+<Callout type="warn" title="The launch file only knows the built-in plugins">
+  `generate_polynomial_trajectory_behavior_launch.py` only accepts the plugins listed in
+  `as2_behaviors_trajectory_generation`'s own `plugins.xml`, and rejects any other `plugin_name`.
+  Run the node directly as above, or start it from a launch file of your own.
 </Callout>
+
+</Step>
+<Step>
+
+### Fly it
+
+With the trajectory plugins, go to and follow path send their goals to the trajectory generator. So
+a plain mission flies through your plugin:
+
+```python title="trajectory_mission.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+drone.arm()
+drone.offboard()
+drone.takeoff(height=1.5, speed=0.5)
+
+# Both behaviors fly through the trajectory generator, so through your plugin
+drone.go_to(3.0, 0.0, 1.5, speed=1.0)
+path = [[3.0, 3.0, 1.5], [0.0, 3.0, 1.5], [0.0, 0.0, 1.5]]
+drone.follow_path.follow_path_with_keep_yaw(path, speed=1.0)
+print("Back at", [round(value, 2) for value in drone.position])
+
+drone.land(speed=0.5)
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```bash tab="colcon"
+python3 trajectory_mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 trajectory_mission.py
+```
+
+```console noCopy
+Back at [0.0, -0.05, 1.5]
+```
+
+The behavior logs each trajectory. The 3 m to the first point take 3 s at 1 m/s, and the 9 m of
+the path take 9 s:
+
+```console noCopy
+[INFO] [drone0.TrajectoryGeneratorBehavior]: Trajectory generated: 1 waypoints, compute=0.0000 s, duration=3.00 s
+[INFO] [drone0.TrajectoryGeneratorBehavior]: TrajectoryGenerator goal accepted
+[INFO] [drone0.TrajectoryGeneratorBehavior]: SUCCESS
+[INFO] [drone0.TrajectoryGeneratorBehavior]: Trajectory generated: 3 waypoints, compute=0.0000 s, duration=9.01 s
+[INFO] [drone0.TrajectoryGeneratorBehavior]: TrajectoryGenerator goal accepted
+[INFO] [drone0.TrajectoryGeneratorBehavior]: SUCCESS
+```
+
+You can also send the behavior a goal by hand. The feedback reports the next waypoint, which comes
+from `getNextWaypointId`:
+
+```bash
+ros2 action send_goal --feedback /drone0/TrajectoryGeneratorBehavior \
+  as2_msgs/action/GeneratePolynomialTrajectory \
+  "{max_speed: 1.0, path: [
+    {id: 'a', pose: {header: {frame_id: earth}, pose: {position: {x: 2.0, y: 0.0, z: 1.5}}}},
+    {id: 'b', pose: {header: {frame_id: earth}, pose: {position: {x: 2.0, y: 2.0, z: 1.5}}}}]}"
+```
+
+The feedback says `next_waypoint_id: a` until the drone reaches the first point, then
+`next_waypoint_id: b`, and the goal ends with:
+
+```console noCopy
+Result:
+    trajectory_generator_success: true
+
+Goal finished with status: SUCCEEDED
+```
+
+</Step>
+</Steps>
+
+## Contribute it to Aerostack2
+
+The built-in plugins live in `as2_behaviors_trajectory_generation`, each in a folder of its own
+under `generate_polynomial_trajectory_behavior/plugins/`. To add yours there:
+
+- Give the folder the plugin's name, with its own `CMakeLists.txt` that builds one shared library
+  of the same name. Link it against `${BEHAVIOR_NAME}_plugin_base`, as the
+  [jerk limited plugin](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/plugins/jerk_limited_trajectory_generator/CMakeLists.txt)
+  does.
+- Add the folder's name to `PLUGIN_LIST` in `generate_polynomial_trajectory_behavior/CMakeLists.txt`.
+- Add a `<library>` for it to `generate_polynomial_trajectory_behavior/plugins.xml`.
+- Put its default parameters in `config/<plugin_name>.yaml` inside the folder. The launch file loads
+  that file whenever the plugin is chosen.
+- Add a GoogleTest test in a `tests` folder, like the other plugins.
+
+The launch file then accepts it as a `plugin_name`.
+
+## Real implementations
+
+- [`generate_polynomial_trajectory_base.hpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/include/generate_polynomial_trajectory_behavior/generate_polynomial_trajectory_base.hpp)
+  is the base class, with the contract of every method.
+- [`jerk_limited_trajectory_generator`](https://github.com/aerostack2/aerostack2/tree/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/plugins/jerk_limited_trajectory_generator)
+  and [`mav_trajectory_generator`](https://github.com/aerostack2/aerostack2/tree/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/plugins/mav_trajectory_generator)
+  plan again on every change, like the plugin above.
+- [`dynamic_mav_trajectory_generator`](https://github.com/aerostack2/aerostack2/tree/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/plugins/dynamic_mav_trajectory_generator)
+  overrides `updateWaypoints` to change a trajectory without starting over.
+- [`generate_polynomial_trajectory_behavior.cpp`](https://github.com/aerostack2/aerostack2/blob/main/as2_behaviors/as2_behaviors_trajectory_generation/generate_polynomial_trajectory_behavior/src/generate_polynomial_trajectory_behavior.cpp)
+  is the behavior that loads and calls the plugin.
+
+## Next steps
+
+<Cards>
+  <Card title="Trajectory generators" href="/docs/plugins/trajectory-generators" description="The built-in planners and how to tune them." />
+  <Card title="Follow reference plugin" href="/docs/develop/follow-reference-plugin" description="Change how the follow reference behavior chases its target." />
+</Cards>
