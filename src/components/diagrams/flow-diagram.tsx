@@ -64,8 +64,8 @@ export interface FlowEdge {
   /** Shown on the edge. Leave out to draw the edge without a label. */
   label?: string;
   /**
-   * Where the label sits, from 0 at the source to 1 at the target. Defaults
-   * to the middle. Meant for straight edges, to stagger two parallel labels.
+   * Where the label sits along the edge, from 0 at the source to 1 at the
+   * target. Defaults to the middle. Use it to stagger two parallel labels.
    */
   labelAt?: number;
 }
@@ -114,7 +114,6 @@ const SIDES: Record<Side, Position> = {
 interface HighlightState {
   active: string;
   select: (channel: string) => void;
-  hover: (channel: string | null) => void;
   activeNodes: Set<string>;
 }
 
@@ -239,6 +238,47 @@ function BoxNode({ id, data }: NodeProps<DiagramNode>) {
   );
 }
 
+/**
+ * The point a fraction of the way along a cubic Bézier, measured by length.
+ * The curve's own midpoint (t = 0.5) sits near the bend of a cornered edge,
+ * which pushes its label against the boxes.
+ */
+function pointAlong(path: string, fraction: number): [number, number] {
+  const n = path.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) ?? [];
+  if (n.length < 8) return [n[0] ?? 0, n[1] ?? 0];
+  const [x0, y0, x1, y1, x2, y2, x3, y3] = n;
+  const at = (t: number): [number, number] => {
+    const u = 1 - t;
+    const a = u * u * u;
+    const b = 3 * u * u * t;
+    const c = 3 * u * t * t;
+    const d = t * t * t;
+    return [
+      a * x0 + b * x1 + c * x2 + d * x3,
+      a * y0 + b * y1 + c * y2 + d * y3,
+    ];
+  };
+  const steps = 64;
+  const points = Array.from({ length: steps + 1 }, (_, i) => at(i / steps));
+  const lengths = [0];
+  for (let i = 1; i <= steps; i++) {
+    const [px, py] = points[i - 1];
+    const [qx, qy] = points[i];
+    lengths.push(lengths[i - 1] + Math.hypot(qx - px, qy - py));
+  }
+  const goal = lengths[steps] * fraction;
+  for (let i = 1; i <= steps; i++) {
+    if (lengths[i] >= goal) {
+      const span = lengths[i] - lengths[i - 1] || 1;
+      const k = (goal - lengths[i - 1]) / span;
+      const [px, py] = points[i - 1];
+      const [qx, qy] = points[i];
+      return [px + (qx - px) * k, py + (qy - py) * k];
+    }
+  }
+  return points[steps];
+}
+
 function ChannelEdge({
   id,
   sourceX,
@@ -250,8 +290,8 @@ function ChannelEdge({
   markerEnd,
   data,
 }: EdgeProps<DiagramEdge>) {
-  const { active, select, hover } = useHighlight();
-  const [path, labelX, labelY] = getBezierPath({
+  const { active, select } = useHighlight();
+  const [path] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
@@ -262,11 +302,7 @@ function ChannelEdge({
   if (!data) return null;
   const { edge } = data;
   const isActive = edge.channel === active;
-  const at = edge.labelAt;
-  const labelLeft =
-    at === undefined ? labelX : sourceX + (targetX - sourceX) * at;
-  const labelTop =
-    at === undefined ? labelY : sourceY + (targetY - sourceY) * at;
+  const [labelLeft, labelTop] = pointAlong(path, edge.labelAt ?? 0.5);
   const danger = edge.tone === "danger";
 
   return (
@@ -294,8 +330,6 @@ function ChannelEdge({
           <button
             type="button"
             onClick={() => select(edge.channel)}
-            onMouseEnter={() => hover(edge.channel)}
-            onMouseLeave={() => hover(null)}
             className={cn(
               "nodrag nopan pointer-events-auto absolute rounded-full border px-2 py-0.5 font-mono text-[10.5px] transition-colors duration-200",
               isActive
@@ -339,7 +373,7 @@ function AutoFit() {
 
 /**
  * A static node-and-edge diagram whose edges are grouped into channels.
- * Hovering or selecting a channel highlights its edges and the nodes it
+ * Selecting a channel highlights its edges and the nodes it
  * connects, and shows its details underneath.
  */
 export function FlowDiagram({
@@ -353,9 +387,7 @@ export function FlowDiagram({
   caption,
 }: FlowDiagramProps) {
   const channelIds = Object.keys(channels);
-  const [selected, setSelected] = useState(channelIds[0]);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const active = hovered ?? selected;
+  const [active, setActive] = useState(channelIds[0]);
 
   const highlight = useMemo<HighlightState>(() => {
     const activeNodes = new Set<string>();
@@ -365,7 +397,7 @@ export function FlowDiagram({
         activeNodes.add(edge.target);
       }
     }
-    return { active, select: setSelected, hover: setHovered, activeNodes };
+    return { active, select: setActive, activeNodes };
   }, [active, edges]);
 
   const flowNodes = useMemo<DiagramNode[]>(
@@ -410,7 +442,7 @@ export function FlowDiagram({
     [edges, active],
   );
 
-  const details = channels[selected];
+  const details = channels[active];
 
   return (
     <Highlight.Provider value={highlight}>
@@ -474,13 +506,11 @@ export function FlowDiagram({
                 key={id}
                 type="button"
                 role="tab"
-                aria-selected={id === selected}
-                onClick={() => setSelected(id)}
-                onMouseEnter={() => setHovered(id)}
-                onMouseLeave={() => setHovered(null)}
+                aria-selected={id === active}
+                onClick={() => setActive(id)}
                 className={cn(
                   "rounded-full border px-2.5 py-1 font-mono text-xs transition-colors",
-                  id === selected
+                  id === active
                     ? "border-fd-primary bg-fd-primary/10 text-fd-primary"
                     : "border-fd-border text-fd-muted-foreground hover:text-fd-foreground",
                 )}
