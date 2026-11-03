@@ -1,0 +1,173 @@
+---
+title: A mission as a behavior tree
+description: Write a patrol as a behavior tree that waits for a start signal, repeats a square and always lands.
+icon: Network
+---
+
+In this tutorial you write a patrol as a [behavior tree](/docs/concepts/missions#behavior-trees)
+instead of a script. The tree waits for a start signal, flies a square twice and lands, and it
+still lands if the patrol fails.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** The tree flies the same
+  kind of mission.
+- **Some idea of behavior trees helps.** The
+  [BehaviorTree.CPP tutorials](https://www.behaviortree.dev/docs/intro) explain sequences, fallbacks
+  and decorators. Aerostack2 runs trees with BehaviorTree.CPP 4.
+
+## How a tree runs a mission
+
+The tree is an XML file. Each behavior is an action node, like `TakeOff` or `GoTo`, and control
+nodes decide what runs next.
+
+- **`Sequence`** runs its children in order, and fails as soon as one fails.
+- **`Fallback`** tries its children in order until one succeeds.
+- **`Repeat`** runs its child a number of times.
+
+A node from `as2_behavior_tree` called `WaitForEvent` holds the tree until a message arrives on a
+topic. The table under [Behavior trees](/docs/concepts/missions#behavior-trees) lists every
+Aerostack2 node.
+
+<Steps>
+<Step>
+
+### Write the tree
+
+In the Quickstart project folder, create `trees/patrol.xml`:
+
+```xml title="trees/patrol.xml"
+<?xml version="1.0"?>
+<root BTCPP_format="4">
+  <BehaviorTree ID="Patrol">
+    <Sequence>
+      <WaitForEvent topic_name="start" result="{start}">
+        <AlwaysSuccess/>
+      </WaitForEvent>
+      <Arm service_name="set_arming_state"/>
+      <Offboard service_name="set_offboard_mode"/>
+      <TakeOff height="1.5" speed="0.5"/>
+      <Fallback>
+        <Repeat num_cycles="2">
+          <Sequence>
+            <GoTo pose="2;0;1.5" max_speed="1.0" yaw_mode="1" yaw_angle="0.0"/>
+            <GoTo pose="2;2;1.5" max_speed="1.0" yaw_mode="1" yaw_angle="0.0"/>
+            <GoTo pose="0;2;1.5" max_speed="1.0" yaw_mode="1" yaw_angle="0.0"/>
+            <GoTo pose="0;0;1.5" max_speed="1.0" yaw_mode="1" yaw_angle="0.0"/>
+          </Sequence>
+        </Repeat>
+        <Echo data="Patrol failed, landing"/>
+      </Fallback>
+      <Land speed="0.5"/>
+    </Sequence>
+  </BehaviorTree>
+</root>
+```
+
+Read it from the top:
+
+1. `WaitForEvent` holds everything until a message arrives on the drone's `start` topic.
+2. `Arm`, `Offboard` and `TakeOff` get the drone in the air. If any of them fails, the whole
+   sequence fails and nothing else runs.
+3. `Repeat` flies the square twice. A `GoTo` pose is `x;y;z` in metres, in `earth`, and
+   `yaw_mode="1"` turns the drone to face each point.
+4. If a `GoTo` fails, the `Repeat` fails, and the `Fallback` moves on to `Echo`, which prints a
+   message and succeeds. Either way the `Fallback` succeeds, so the sequence goes on to `Land`.
+
+</Step>
+<Step>
+
+### Load it at launch
+
+The project starts a behavior tree with the drone, in the `mission_execution` window. Its command
+is in `tmuxinator/aerostack2.yaml`. Point it at your tree:
+
+```yaml title="tmuxinator/aerostack2.yaml"
+  # Mission execution
+  - mission_execution:
+      layout:
+      panes:
+        # Behavior tree
+        - ros2 launch as2_behavior_tree behavior_trees.launch.py
+            drone_id:=<%= drone_namespace %>
+            tree:=./trees/patrol.xml
+```
+
+Then start the drone:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+The tree loads and stops at `WaitForEvent`. Nothing flies yet.
+
+</Step>
+<Step>
+
+### Start the patrol
+
+The project's `mission_behavior_tree.py` publishes one empty message on `/drone0/start`. Run it in
+a second terminal:
+
+```bash tab="apt, source or Docker"
+python3 mission_behavior_tree.py
+```
+
+```bash tab="Pixi"
+pixi run python3 mission_behavior_tree.py
+```
+
+The drone takes off, flies the square twice and lands. Press `Ctrl-b` and the `mission_execution`
+window's number to watch the tree. Every node logs its changes of state as it runs:
+
+```console noCopy
+GoTo                      IDLE -> RUNNING
+GoTo                      RUNNING -> SUCCESS
+...
+Repeat                    RUNNING -> SUCCESS
+Fallback                  RUNNING -> SUCCESS
+Land                      IDLE -> RUNNING
+Land                      RUNNING -> SUCCESS
+Sequence                  RUNNING -> SUCCESS
+```
+
+When the tree finishes, the node exits. To fly again, run the launch command again in that pane.
+
+</Step>
+<Step>
+
+### Change the tree
+
+Try a few changes, relaunching the tree after each:
+
+- Set `num_cycles="-1"` to patrol until something fails.
+- Give the `Fallback` a `GoTo` back to the origin before the `Echo`, so a failed patrol returns
+  home before landing.
+
+To see the tree as it runs, start it with `groot_logger:=true` and connect
+[Groot](https://www.behaviortree.dev/groot) to it. Groot can also draw and edit the XML.
+
+</Step>
+</Steps>
+
+## Trees or scripts
+
+| | Python API | Behavior tree |
+| --- | --- | --- |
+| Written as | A Python script | An XML file |
+| Good at | Logic, calculations, several drones | Missions that react to events and failures |
+| Runs | From any terminal | In its own node, loaded with the drone |
+| Edit visually | No | With Groot |
+
+They call the same behaviors underneath, so you can start with either and change later.
+
+## Next steps
+
+<Cards>
+  <Card title="Several drones" href="/docs/tutorials/multiple-drones" description="Fly three drones from one script." />
+  <Card title="Missions" href="/docs/concepts/missions" description="Every behavior tree node, and the mission interpreter." />
+</Cards>

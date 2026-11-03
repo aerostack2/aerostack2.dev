@@ -1,0 +1,462 @@
+---
+title: The motion controller
+description: Watch the control modes change, let the PID plugin fly, tune a gain and switch to the differential flatness controller.
+icon: SlidersHorizontal
+---
+
+In this tutorial you watch the [motion controller](/docs/concepts/motion-controller) switch control
+modes as the drone flies, find out when its plugin actually runs, tune a PID gain and measure the
+difference, and fly with another controller plugin.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** You know how to start the
+  drone and run a script.
+- **SciPy is installed.** Two scripts send references straight to the controller with the motion
+  reference handlers, which need it. [Fly by hand](/docs/tutorials/fly-by-hand) installs it too.
+
+```bash tab="apt, source or Docker"
+sudo apt install python3-scipy
+```
+
+```bash tab="Pixi"
+pixi add scipy
+```
+
+<Steps>
+<Step>
+
+### Start the drone and watch the modes
+
+Start the drone from the Quickstart project folder:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+The controller publishes its input and output modes on `controller/info`, as numbers. This script
+prints them as words, each time they change. Create `modes.py`:
+
+```python title="modes.py"
+import rclpy
+from as2_msgs.msg import ControllerInfo, ControlMode
+from rclpy.node import Node
+
+MODES = {
+    ControlMode.UNSET: "unset",
+    ControlMode.HOVER: "hover",
+    ControlMode.POSITION: "position",
+    ControlMode.SPEED: "speed",
+    ControlMode.SPEED_IN_A_PLANE: "speed in a plane",
+    ControlMode.ATTITUDE: "attitude",
+    ControlMode.BODY_RATES: "body rates",
+    ControlMode.TRAJECTORY: "trajectory",
+}
+YAW_MODES = {ControlMode.YAW_ANGLE: "yaw angle", ControlMode.YAW_SPEED: "yaw speed"}
+
+
+def describe(mode: ControlMode) -> str:
+    """Turn a control mode into words, such as 'position, yaw angle'."""
+    text = MODES.get(mode.control_mode, str(mode.control_mode))
+    if mode.yaw_mode in YAW_MODES:
+        text += ", " + YAW_MODES[mode.yaw_mode]
+    return text
+
+
+class ModeWatcher(Node):
+    """Print the controller's modes each time they change."""
+
+    def __init__(self) -> None:
+        super().__init__("mode_watcher")
+        self.last = None
+        self.create_subscription(ControllerInfo, "/drone0/controller/info", self.on_info, 10)
+
+    def on_info(self, msg: ControllerInfo) -> None:
+        modes = (describe(msg.input_control_mode), describe(msg.output_control_mode))
+        if modes != self.last:
+            print(f"in: {modes[0]:<24} out: {modes[1]}", flush=True)
+            self.last = modes
+
+
+rclpy.init()
+rclpy.spin(ModeWatcher())
+```
+
+Run it in a second terminal and leave it running:
+
+```bash tab="apt, source or Docker"
+python3 modes.py
+```
+
+```bash tab="Pixi"
+pixi run python3 modes.py
+```
+
+```console noCopy
+in: unset                    out: unset
+```
+
+Nothing has asked the controller for a mode yet.
+
+</Step>
+<Step>
+
+### Switch modes from a script
+
+Behaviors switch modes for you. This script also sends a speed straight to the controller for three
+seconds, the way the keyboard teleoperation does in Speed mode, and then asks it to hover. Create
+`switch_modes.py`:
+
+```python title="switch_modes.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface_teleop import DroneInterfaceTeleop
+
+rclpy.init()
+drone = DroneInterfaceTeleop(drone_id="drone0")
+
+try:
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    print("Take off")
+    drone.takeoff(height=1.5, speed=0.5)
+
+    print("Go to")
+    drone.go_to(2.0, 0.0, 1.5, speed=1.0)
+
+    # Send a speed straight to the motion controller for three seconds, like the keyboard does
+    print("Speed")
+    for _ in range(30):
+        drone.motion_ref_handler.speed.send_speed_command_with_yaw_speed(
+            [0.0, 0.5, 0.0], twist_frame_id="earth", yaw_speed=0.0)
+        time.sleep(0.1)
+
+    print("Hover")
+    drone.motion_ref_handler.hover()
+    time.sleep(2.0)
+finally:
+    print("Land")
+    drone.land(speed=0.5)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+`DroneInterfaceTeleop` is `DroneInterface` plus `motion_ref_handler`, which sends position, speed
+and hover references without a behavior. Run it in a third terminal, and watch `modes.py`:
+
+```console noCopy
+in: unset                    out: unset
+in: position, yaw angle      out: position, yaw angle
+in: speed, yaw speed         out: speed, yaw speed
+in: hover, yaw angle         out: hover, yaw angle
+in: speed, yaw speed         out: speed, yaw speed
+```
+
+Take off and go to both send positions, so the mode only changes once for the two of them. Then
+come the script's speeds, the hover, and the land behavior, which comes down by speed.
+
+Before its first reference in a new mode, each sender calls the controller's `set_control_mode`
+service. The motion reference handlers do this for behaviors and scripts alike, and only when the
+mode changes.
+
+</Step>
+<Step>
+
+### Check whether the plugin runs
+
+Input and output are always the same above. That's bypass. The multirotor simulator takes
+positions, speeds and hover itself, so the controller passes every reference straight through and
+the PID plugin never computes anything.
+
+You can see it on the plugin's debug topic, the velocity it asks for:
+
+```bash
+ros2 topic echo /drone0/debug/controller/desired_velocity
+```
+
+Run `switch_modes.py` again. The topic prints nothing during the whole flight. Stop the echo with
+`Ctrl-C`.
+
+</Step>
+<Step>
+
+### Let the plugin fly
+
+Turn bypass off for the controller. Stop the drone and add `use_bypass` to the controller's block
+in `config/config.yaml`:
+
+```yaml title="config/config.yaml (excerpt)"
+  # Motion Controller
+  controller_manager:
+    ros__parameters:
+      cmd_freq: 100.0 # Hz of controller commands send
+      use_bypass: false
+```
+
+Start the drone and `modes.py` again, and run `switch_modes.py`:
+
+```console noCopy
+in: unset                    out: unset
+in: position, yaw angle      out: speed, yaw speed
+in: speed, yaw speed         out: speed, yaw speed
+in: position, yaw angle      out: speed, yaw speed
+in: speed, yaw speed         out: speed, yaw speed
+```
+
+Now the plugin turns positions into speeds. The hover shows up as a position, because the
+controller freezes where the drone is and lets the plugin hold it. The script logs
+"Timeout waiting for mode 1" at that point, since it waits to see hover reported. The drone hovers
+anyway.
+
+The debug topic now has messages while the drone flies to a position:
+
+```console noCopy
+header:
+  stamp:
+    sec: 1793668450
+    nanosec: 609330486
+  frame_id: drone0/odom
+twist:
+  linear:
+    x: -0.008563030203489317
+    y: -2.7825450568065647e-17
+    z: 0.040008609524471266
+```
+
+</Step>
+<Step>
+
+### Measure a step
+
+To see what a gain does, send one position 1 m ahead and time how the drone gets there. Create
+`step.py`:
+
+```python title="step.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface_teleop import DroneInterfaceTeleop
+
+STEP = 1.0  # How far to move along x, in meters
+SPEED_LIMIT = 3.0  # The fastest the controller may fly toward the point, in m/s
+
+
+def step_response(drone: DroneInterfaceTeleop) -> None:
+    """Send one position 1 m ahead and measure how the drone gets there."""
+    start = drone.position[0]
+    target = start + STEP
+    drone.motion_ref_handler.position.send_position_command_with_yaw_angle(
+        [target, 0.0, 1.5], twist_limit=SPEED_LIMIT,
+        pose_frame_id="earth", twist_frame_id="earth", yaw_angle=0.0)
+
+    t0 = time.time()
+    rise_time = None
+    peak = start
+    while time.time() - t0 < 6.0:
+        x = drone.position[0]
+        peak = max(peak, x)
+        if rise_time is None and x - start >= 0.9 * STEP:
+            rise_time = time.time() - t0
+        time.sleep(0.02)
+
+    overshoot = max(0.0, peak - target)
+    print(f"90% of the step after {rise_time:.2f} s, overshoot {overshoot * 100:.0f} cm, "
+          f"error after 6 s {abs(drone.position[0] - target) * 100:.1f} cm")
+
+
+rclpy.init()
+drone = DroneInterfaceTeleop(drone_id="drone0")
+
+try:
+    if drone.arm() and drone.offboard() and drone.takeoff(height=1.5, speed=0.5):
+        drone.go_to(0.0, 0.0, 1.5, speed=0.5)
+        time.sleep(2.0)
+        step_response(drone)
+finally:
+    drone.land(speed=0.5)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+The script takes off, moves to the origin, sends the step and measures for six seconds. Run it:
+
+```console noCopy
+90% of the step after 2.27 s, overshoot 1 cm, error after 6 s 0.8 cm
+```
+
+The project's `position_control.kp` is 1.0, so the plugin asks for 1 m/s per metre of error. The
+drone slows down as it closes in and takes over two seconds to cover 90% of the step.
+
+</Step>
+<Step>
+
+### Change a gain while flying
+
+Gains can change while the controller runs. Raise the gain on x, then run `step.py` again:
+
+```bash
+ros2 param set /drone0/controller_manager pid_speed_controller.position_control.kp.x 3.0
+```
+
+```console noCopy
+Set parameter successful: success
+```
+
+Try a few values. These came from our runs:
+
+| `kp.x` | 90% of the step | Overshoot |
+| --- | --- | --- |
+| 0.5 | 4.51 s | 0 cm |
+| 1.0 | 2.27 s | 1 cm |
+| 3.0 | 1.01 s | 6 cm |
+| 8.0 | 0.97 s | 68 cm |
+
+Up to a point a higher gain gets there faster. At 8 the drone is no faster, and it flies far past
+the point before it comes back. The plugin asks for speeds the drone can't reach or shed in time,
+since the simulated drone can only accelerate so hard.
+
+With bypass on, the same change does nothing. At `kp.x` 8.0 the step still took 2.61 s with 1 cm of
+overshoot, because the simulator's own position controller was flying it.
+
+</Step>
+<Step>
+
+### Keep the gain
+
+`ros2 param set` only lasts until the controller restarts. To keep a gain, change it in the
+plugin's file, which the project passes to the controller at launch:
+
+```yaml title="config/pid_speed_controller.yaml (excerpt)"
+/**:
+  ros__parameters:
+    pid_speed_controller:
+      proportional_limitation: true
+      position_control:
+        reset_integral: false
+        antiwindup_cte: 0.5
+        alpha: 0.2
+        kp:
+          x: 3.0
+          y: 3.0
+          z: 1.0
+```
+
+Write every gain as a decimal, `3.0` rather than `3`. The
+[plugin reference](/docs/plugins/motion-controller#pid-speed) lists every loop and gain.
+
+</Step>
+<Step>
+
+### Switch to differential flatness
+
+The project can start the differential flatness controller instead of PID speed, with `-c df`.
+That plugin only takes trajectories and sends body rates, so two more things change in
+`config/config.yaml`:
+
+- **Bypass stays off.** The simulator takes trajectories too, so with bypass on it would fly them
+  itself and the plugin would never run.
+- **The behaviors send trajectories.** Each motion behavior has a trajectory plugin, already listed
+  in the file as a comment. Switch all four to it:
+
+```yaml title="config/config.yaml (excerpt)"
+  TakeoffBehavior:
+    ros__parameters:
+      takeoff_plugin_name: "takeoff_plugin_trajectory"
+  LandBehavior:
+    ros__parameters:
+      land_plugin_name: "land_plugin_trajectory"
+  GoToBehavior:
+    ros__parameters:
+      go_to_plugin_name: "go_to_plugin_trajectory"
+  FollowPathBehavior:
+    ros__parameters:
+      follow_path_plugin_name: "follow_path_plugin_trajectory"
+```
+
+The trajectory plugins hand each goal to the trajectory generator behavior, which the project
+already starts in its `behaviors` window. Stop the drone and start it with the other controller:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash -c df
+```
+
+```bash tab="Pixi"
+pixi run launch -c df
+```
+
+<Callout type="warn" title="-c needs a fix in the project">
+  The project's `launch_as2.bash` reads its options with `getopts "cmn:g"`, so `-c` takes no value
+  and the script stops with "Invalid motion controller plugin". Change it to `getopts "c:mn:g"`
+  until the project is fixed.
+</Callout>
+
+The controller's pane logs "Unknown parameter 'trajectory_control.alpha'" at start. The project's
+`config/differential_flatness_controller.yaml` sets a gain this plugin doesn't have, and the rest
+loads fine.
+
+Run `modes.py`, and the Quickstart mission:
+
+```bash tab="apt, source or Docker"
+python3 mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 mission.py
+```
+
+The drone flies the same squares, and the controller now turns trajectories into body rates:
+
+```console noCopy
+in: unset                    out: unset
+in: trajectory, yaw angle    out: body rates, yaw speed
+```
+
+<Callout type="warn" title="Only trajectories">
+  Don't send this controller positions or speeds, from `switch_modes.py`, `step.py` or the keyboard
+  teleoperation. It refuses them, and in our test the drone didn't hold its place after that. It
+  ended up on the ground and the land behavior failed.
+</Callout>
+
+</Step>
+<Step>
+
+### Put it back
+
+Stop the drone and `modes.py`, and restore the project's configuration:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+git restore config/config.yaml config/pid_speed_controller.yaml
+```
+
+```bash tab="Pixi"
+pixi run stop
+git restore config/config.yaml config/pid_speed_controller.yaml
+```
+
+</Step>
+</Steps>
+
+## What you saw
+
+| Setup | Position references | What flies them |
+| --- | --- | --- |
+| PID speed, bypass on | Passed to the simulator as they are | The simulator's own controller |
+| PID speed, bypass off | Turned into speeds | The PID plugin, with your gains |
+| Differential flatness, bypass off | Refused. Trajectories become body rates | The differential flatness plugin |
+
+## Next steps
+
+<Cards>
+  <Card title="Motion controller plugins" href="/docs/plugins/motion-controller" description="Every gain of the PID speed, differential flatness and geometric controllers." />
+  <Card title="Motion controller" href="/docs/concepts/motion-controller" description="How the controller picks a mode, and when it steps aside." />
+  <Card title="Planning around obstacles" href="/docs/tutorials/path-planning" description="Fly around obstacles with the map server and path planning." />
+</Cards>

@@ -1,0 +1,35 @@
+---
+title: Overview
+description: Step-by-step lessons that take you from your first flight to the main modules of Aerostack2.
+icon: Compass
+---
+
+Each tutorial builds something small, one step at a time, and explains what happens underneath.
+They all start from the [Quickstart](/docs/getting-started/quickstart) project and the multirotor
+simulator, so they run on any machine, including macOS through Pixi, and you don't need a drone.
+
+Do the getting started ones in order. The module ones stand on their own once you've done those.
+
+## Getting started
+
+<Cards>
+  <Card title="Fly by hand" href="/docs/tutorials/fly-by-hand" description="Take off, fly and land with the keyboard, and watch what the drone does." />
+  <Card title="A mission in Python" href="/docs/tutorials/python-mission" description="Write a mission that reads the drone's state, flies to points and follows a path." />
+  <Card title="A mission as a behavior tree" href="/docs/tutorials/behavior-tree-mission" description="Write a patrol as a tree that waits for a start signal and always lands." />
+  <Card title="Several drones" href="/docs/tutorials/multiple-drones" description="Fly three drones from one script." />
+</Cards>
+
+## Modules
+
+<Cards>
+  <Card title="Move to Gazebo" href="/docs/tutorials/gazebo" description="The same missions in a 3D world, with sensors and cameras." />
+  <Card title="State estimation" href="/docs/tutorials/state-estimation" description="Switch where the drone's position comes from." />
+  <Card title="The motion controller" href="/docs/tutorials/motion-controller" description="Control modes, switching controllers and tuning a PID." />
+  <Card title="Planning around obstacles" href="/docs/tutorials/path-planning" description="Fly around obstacles with the map server and path planning." />
+  <Card title="From simulation to a real drone" href="/docs/tutorials/real-drone" description="Fly your mission on a Crazyflie or a Tello." />
+</Cards>
+
+## Extending Aerostack2
+
+These tutorials are about using Aerostack2. To extend it, with a controller plugin, a new drone or
+a package of your own, see the guides in [Develop](/docs/develop).

@@ -1,0 +1,311 @@
+---
+title: From simulation to a real drone
+description: Fly the mission you wrote in simulation on a Crazyflie or a Tello.
+icon: Plane
+---
+
+In this tutorial you take the mission from [A mission in Python](/docs/tutorials/python-mission)
+to a real drone, a Bitcraze Crazyflie or a Ryze Tello. The mission script barely changes. What
+changes is the platform you launch, where the drone's position comes from, and how careful you have
+to be.
+
+<Callout type="warn" title="A real drone can hurt you">
+  Fly in a closed space with a net or nobody inside, with propeller guards on. Keep the first flights
+  low and slow, and keep a way to stop the motors at hand. Read [Stopping in an
+  emergency](#stopping-in-an-emergency) before the first flight.
+</Callout>
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** This tutorial reuses its
+  `my_mission.py`, and [Move to Gazebo](/docs/tutorials/gazebo) helps too.
+- **The drone's platform is installed.** The [Crazyflie](/docs/aerial-platforms/crazyflie) and
+  [Ryze Tello](/docs/aerial-platforms/ryze-tello) pages explain how to build it and set up the
+  drone. The Crazyflie platform builds on ROS 2 Humble only.
+- **The drone can tell where it is.** A Crazyflie needs a Flow deck, a Lighthouse system or motion
+  capture. A Tello measures its height and speed but not its position, so it needs motion capture.
+- **tmux and tmuxinator are installed**, as in the [Quickstart](/docs/getting-started/quickstart).
+
+These projects have no Pixi environment. Run their commands in a terminal where Aerostack2 and the
+platform are sourced.
+
+## What changes and what stays
+
+| | Simulation | Real drone |
+| --- | --- | --- |
+| Mission script | `my_mission.py` | The same, with smaller distances and speeds |
+| Aerial platform | Multirotor simulator or Gazebo | `as2_platform_crazyflie` or `as2_platform_tello` |
+| Position | Exact, from the simulator | From the drone's own sensors, or from motion capture |
+| State estimator | Ground truth from the simulator | Raw odometry from the Crazyflie, or ground truth from motion capture |
+| Clock | Simulated in Gazebo, with `use_sim_time` | The computer's |
+| Motion controller and behaviors | PID speed controller, motion behaviors | The same, with gains and plugins for the drone |
+| Namespace | `drone0` | `drone0`, from the project's `config/config.yaml` |
+
+<Steps>
+<Step>
+
+### Get the project
+
+Each drone has a ready-made project, laid out like the Quickstart's:
+
+```bash tab="Crazyflie"
+git clone https://github.com/aerostack2/project_crazyflie.git
+cd project_crazyflie
+```
+
+```bash tab="Tello"
+git clone https://github.com/aerostack2/project_dji_tello.git
+cd project_dji_tello
+```
+
+The windows of the tmux session are the same as in simulation. Only the `platform` window runs
+something else, the driver that talks to the drone.
+
+</Step>
+<Step>
+
+### Tell the project about your drone
+
+Everything for the drones is in `config/config.yaml`. Its first part applies to every drone, and
+the end has one section per drone, named after its namespace.
+
+<Tabs items={["Crazyflie", "Tello"]}>
+<Tab value="Crazyflie">
+
+Set the radio address of your Crazyflie under `drone0`:
+
+```yaml title="config/config.yaml (excerpt)"
+drone0:
+  platform:
+    ros__parameters:
+      uri: radio://0/80/2M/E7E7E7E701
+```
+
+With a Flow deck or Lighthouse, the drone's own estimate is good enough to fly on. The project
+already passes it on with the [raw odometry](/docs/concepts/state-estimator#raw-odometry) estimator:
+
+```yaml title="config/config.yaml (excerpt)"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+```
+
+For motion capture instead, use the `ground_truth` settings shown for the Tello and turn on
+`external_odom`, as the [Crazyflie](/docs/aerial-platforms/crazyflie#with-the-rest-of-the-stack)
+page explains.
+
+</Tab>
+<Tab value="Tello">
+
+Set your Tello's address under `drone0`. Out of the box a Tello is its own Wi-Fi access point at
+`192.168.10.1`, so join its network first. Remove the `drone1` section if you fly one Tello.
+
+```yaml title="config/config.yaml (excerpt)"
+drone0:
+  platform:
+    ros__parameters:
+      tello_ip: "192.168.10.1"
+```
+
+The Tello has no horizontal position, so the state estimator reads it from motion capture with the
+[ground truth](/docs/concepts/state-estimator#ground-truth) estimator. The project's file asks for
+an estimator called `mocap_pose`, which Aerostack2 no longer has. Replace its `state_estimator`
+section with this one:
+
+```yaml title="config/config.yaml (excerpt)"
+/**:
+  state_estimator:
+    ros__parameters:
+      plugin_name: "ground_truth"
+      ground_truth:
+        mocap_sub_topic: "/mocap/rigid_bodies"
+        twist_smooth_filter_cte: 0.1
+```
+
+And name the drone's rigid body in its own section:
+
+```yaml title="config/config.yaml (excerpt)"
+drone0:
+  state_estimator:
+    ros__parameters:
+      ground_truth:
+        rigid_body_name: "1"
+```
+
+The project also takes off and lands with the Tello's own commands, through the
+`takeoff_plugin_platform` and `land_plugin_platform` plugins. The Tello climbs to its own take-off
+height, whatever height the mission asks for.
+
+</Tab>
+</Tabs>
+
+Notice what isn't there. There's no `use_sim_time`, so every node runs on the computer's clock,
+and no `base_frame_id`, so the drone's body frame is the usual `drone0/base_link`. The motion
+controller is the PID speed controller, as in simulation, with gains for this drone in
+`config/pid_speed_controller.yaml`.
+
+</Step>
+<Step>
+
+### Start the drone and the ground station
+
+Turn the drone on, put it on the floor where the mission starts, and start its stack:
+
+```bash
+./launch_as2.bash
+```
+
+In a second terminal, start the ground station with the keyboard teleoperation:
+
+```bash
+./launch_ground_station.bash -t
+```
+
+The Tello's ground station also starts the OptiTrack driver from
+[mocap4ros2](https://github.com/MOCAP4ROS2-Project), with the server address in
+`config_ground_station/mocap4r2_optitrack.yaml`, and `-m` leaves it out. The Crazyflie's does it
+the other way round, and only starts it with `-m`. Add `-v` to either for RViz.
+
+Watch the `platform` window of the drone's session. The Crazyflie platform waits until the radio
+link connects, and the Tello platform stops if the Tello doesn't answer.
+
+</Step>
+<Step>
+
+### Check where the drone thinks it is
+
+Run `state.py` from [A mission in Python](/docs/tutorials/python-mission#connect-and-read-the-state).
+It doesn't arm or fly. Run it again after moving the drone by hand a little, then put it back:
+
+```bash
+python3 state.py
+```
+
+The position should follow the drone, in metres, with z close to 0 on the floor. Positions are in
+`earth`, like in simulation, but where its origin lies now depends on the source. Every point of the
+mission is measured from there, so know where it is before you send the drone anywhere.
+
+If the position doesn't change, don't fly. The estimator isn't getting the drone's position.
+
+</Step>
+<Step>
+
+### Fly by hand first
+
+Click the keyboard teleoperation window and press `t` to take off. Move the drone a step with the
+arrows, then press `l` to land. This checks the whole stack with you in control, as in
+[Fly by hand](/docs/tutorials/fly-by-hand).
+
+</Step>
+<Step>
+
+### Shrink the mission
+
+Copy `my_mission.py` into the project folder. Keep its structure, with the flight in `fly` and the
+landing in `finally`, but make it fit your flying space. The simulated mission flies 4 m across and
+starts a flight toward a point 10 m away, which won't fit indoors. A 1 × 1 m square at 1 m, at
+0.3 m/s:
+
+```python title="my_mission.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+
+def fly(drone: DroneInterface) -> None:
+    """Fly the mission. Raises an error if a behavior fails."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    if not drone.takeoff(height=1.0, speed=0.3):
+        raise RuntimeError("Take off failed")
+
+    # A 1 x 1 m square at 1 m, slowly
+    drone.go_to(1.0, 0.0, 1.0, speed=0.3)
+    drone.go_to.go_to_point_path_facing([1.0, 1.0, 1.0], speed=0.3)
+    path = [[0.0, 1.0, 1.0], [0.0, 0.0, 1.0]]
+    drone.follow_path.follow_path_with_path_facing(path, speed=0.3)
+
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+try:
+    fly(drone)
+finally:
+    # Whatever happened, land and hand control back
+    drone.land(speed=0.3)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+- `drone_id` is still `drone0`, the namespace in `config/config.yaml`. Rename one, rename both.
+- `DroneInterface` has no `use_sim_time=True`. Without a simulation there's no simulated clock,
+  so leave it out, which is the default.
+- Everything else is the same API, the same behaviors and the same `try` and `finally`.
+
+The script runs unchanged in the multirotor simulator, so fly it there first.
+
+</Step>
+<Step>
+
+### Fly it
+
+Stand clear, with the keyboard teleoperation window ready, and run it:
+
+```bash
+python3 my_mission.py
+```
+
+The drone takes off, flies the square and lands where it started. If something goes wrong, use the
+emergency stop below rather than waiting for the script.
+
+</Step>
+<Step>
+
+### Stop everything
+
+Land the drone first. Then:
+
+```bash
+./stop_tmuxinator.bash
+```
+
+This closes the drone and ground station sessions. Turn the drone off before picking it up.
+
+</Step>
+</Steps>
+
+## Stopping in an emergency
+
+The kill switch stops the motors at once, wherever the drone is. In the keyboard teleoperation
+window it's the Delete key. From a terminal:
+
+```bash
+ros2 topic pub --once /drone0/alert_event as2_msgs/msg/AlertEvent "{alert: -1}"
+```
+
+The platform handles the alerts on `alert_event`, and what happens depends on the drone:
+
+| Alert | Python API | Crazyflie | Tello |
+| --- | --- | --- | --- |
+| Kill switch, `-1` | `send_emergency_killswitch_to_aircraft()` | Emergency stop, motors off | Emergency command, motors off |
+| Emergency hover, `-2` | `send_emergency_hover_to_aircraft()` | **Motors off**, the same as the kill switch | Hovers in place |
+| Emergency land, `-3` | `send_emergency_land_to_aircraft()` | Nothing | Nothing |
+
+On a Crazyflie, stopping the platform means stopping the motors, so an emergency hover drops it
+too. The positive alerts, sent by `send_emergency_hover()` and `send_emergency_land()`, aren't
+acted on by any platform.
+
+After either of the first two, the platform stays in its emergency state, and sends its stop
+command instead of the mission's commands. Restart the drone's stack before flying again. Try the kill switch in simulation first, so you know
+it works from your keyboard before you need it.
+
+## Next steps
+
+<Cards>
+  <Card title="Crazyflie" href="/docs/aerial-platforms/crazyflie" description="Swarms, decks, motion capture and every parameter." />
+  <Card title="Ryze Tello" href="/docs/aerial-platforms/ryze-tello" description="Camera, several Tellos and every parameter." />
+  <Card title="State estimation" href="/docs/tutorials/state-estimation" description="Switch where the drone's position comes from." />
+</Cards>

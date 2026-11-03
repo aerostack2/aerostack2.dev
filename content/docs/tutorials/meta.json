@@ -1,0 +1,18 @@
+{
+  "title": "Tutorials",
+  "icon": "GraduationCap",
+  "pages": [
+    "index",
+    "---Getting started---",
+    "fly-by-hand",
+    "python-mission",
+    "behavior-tree-mission",
+    "multiple-drones",
+    "---Modules---",
+    "gazebo",
+    "state-estimation",
+    "motion-controller",
+    "path-planning",
+    "real-drone"
+  ]
+}

@@ -10,7 +10,7 @@ const columns: { title: string; links: [string, string][] }[] = [
     links: [
       ["Getting started", "/docs/getting-started"],
       ["Concepts", "/docs/concepts"],
-      ["Examples", "/docs/examples"],
+      ["Tutorials", "/docs/tutorials"],
       ["Aerial platforms", "/docs/aerial-platforms"],
       ["Behaviors", "/docs/concepts/behaviors"],
       ["Missions", "/docs/concepts/missions"],

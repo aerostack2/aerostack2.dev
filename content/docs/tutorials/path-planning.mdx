@@ -1,0 +1,351 @@
+---
+title: Planning around obstacles
+description: Build a map from a lidar with the map server and let the path planning behavior fly around a wall.
+icon: Waypoints
+---
+
+In this tutorial you build a map of a wall from lidar scans and fly home around it. The
+[map server](/docs/plugins/map-server) turns the scans into an occupancy grid, and the
+[path planner](/docs/plugins/path-planning) plans a path on that grid and flies it.
+
+The multirotor simulator has no obstacles and no sensors, so a short script plays a lidar in a world
+with one wall. Everything after the lidar works the same on a real drone.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** This tutorial builds on
+  `DroneInterface`, `try` and `finally`, and `wait=False`.
+- **The drone is running.** Start it from the Quickstart project folder and leave it running for
+  the whole tutorial. The scripts go in the same folder.
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+The lidar, the map server and the path planner each keep running until you stop them, so give each
+its own terminal in the project folder. With Pixi, start each command with `pixi run`.
+
+<Steps>
+<Step>
+
+### Add a lidar
+
+Create `fake_lidar.py`. It reads where the drone is, traces 360 rays around it, and publishes the
+distance to the wall as a laser scan:
+
+```python title="fake_lidar.py"
+import math
+
+import rclpy
+from geometry_msgs.msg import PoseStamped
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
+
+RANGE_MAX = 10.0  # metres
+RAYS = 360
+# Obstacles as boxes in earth, [x_min, x_max, y_min, y_max] in metres
+BOXES = [[2.5, 3.0, -2.0, 2.0]]
+
+
+def distance_to_box(x, y, angle, box):
+    """Distance from (x, y) along angle to the box, or None if the ray misses it."""
+    x_min, x_max, y_min, y_max = box
+    near, far = 0.0, RANGE_MAX
+    for start, step, low, high in ((x, math.cos(angle), x_min, x_max),
+                                   (y, math.sin(angle), y_min, y_max)):
+        if abs(step) < 1e-9:
+            if not low <= start <= high:
+                return None
+            continue
+        t1, t2 = sorted(((low - start) / step, (high - start) / step))
+        near, far = max(near, t1), min(far, t2)
+        if near > far:
+            return None
+    return near
+
+
+class FakeLidar(Node):
+    def __init__(self):
+        super().__init__("fake_lidar", namespace="drone0")
+        self.pose = None
+        self.create_subscription(PoseStamped, "self_localization/pose", self.on_pose, 10)
+        self.publisher = self.create_publisher(
+            LaserScan, "sensor_measurements/lidar/scan", qos_profile_sensor_data)
+        self.create_timer(0.1, self.publish_scan)  # 10 Hz
+
+    def on_pose(self, msg: PoseStamped):
+        self.pose = msg
+
+    def publish_scan(self):
+        if self.pose is None:
+            return
+        x = self.pose.pose.position.x
+        y = self.pose.pose.position.y
+        q = self.pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+
+        scan = LaserScan()
+        scan.header.stamp = self.pose.header.stamp
+        scan.header.frame_id = "drone0/base_link"
+        scan.angle_min = -math.pi
+        scan.angle_increment = 2 * math.pi / RAYS
+        scan.angle_max = scan.angle_min + (RAYS - 1) * scan.angle_increment
+        scan.range_min = 0.1
+        scan.range_max = RANGE_MAX
+        for i in range(RAYS):
+            angle = yaw + scan.angle_min + i * scan.angle_increment
+            hits = [distance_to_box(x, y, angle, box) for box in BOXES]
+            hits = [d for d in hits if d is not None]
+            # No hit within range reads as infinity, like a real lidar
+            scan.ranges.append(min(hits) if hits else math.inf)
+        self.publisher.publish(scan)
+
+
+rclpy.init()
+rclpy.spin(FakeLidar())
+```
+
+The wall is 4 m long and 0.5 m thick, 2.5 m in front of the origin along x. Start the lidar:
+
+```bash
+python3 fake_lidar.py
+```
+
+The scans go out on `/drone0/sensor_measurements/lidar/scan`, in the drone's `base_link` frame.
+A lidar on a real drone publishes on that topic too, and it's the one the map server reads.
+
+</Step>
+<Step>
+
+### Start the map server
+
+```bash
+ros2 launch as2_map_server map_server.launch.py \
+  namespace:=drone0 \
+  plugin_name:=scan2occ_grid
+```
+
+The map server traces every ray of every scan into a 30 by 30 m grid centered on the origin of
+`earth`, and publishes the grid on `/drone0/map` with each scan. Check its size:
+
+```bash
+ros2 topic echo --once /drone0/map --field info
+```
+
+```console noCopy
+resolution: 0.10000000149011612
+width: 300
+height: 300
+origin:
+  position:
+    x: -15.0
+    y: -15.0
+...
+```
+
+To see the map, open the ground station in another terminal. In RViz, click **Add**, open the
+**By topic** tab and pick **Map** under `/drone0/map`. The map server doesn't latch the map, so
+set the display's durability policy to Volatile if it isn't already.
+
+The face of the wall shows as occupied, with free space all around the drone. The cells behind the
+wall stay unknown, since no ray has reached them.
+
+</Step>
+<Step>
+
+### Start the path planner
+
+```bash
+ros2 launch as2_behaviors_path_planning path_planner_behavior_launch.py \
+  namespace:=drone0 \
+  plugin_name:=a_star
+```
+
+The planner reads `/drone0/map`. When a goal arrives it plans on the latest grid with the A\*
+plugin, keeping 1 m away from obstacles, and hands the path to the follow path behavior, which the
+Quickstart already runs. Keep this terminal in view, since that's where the planner says what it
+did.
+
+</Step>
+<Step>
+
+### Ask for a point behind the wall
+
+Create `plan.py`, with the same shape as the missions in the earlier tutorials. The
+`navigate_to` module isn't loaded by default, so the script loads it first:
+
+```python title="plan.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+
+def fly(drone: DroneInterface) -> None:
+    """Fly the mission. Raises an error if a behavior fails."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    # The path planner flies at 1 m, so take off to that height
+    if not drone.takeoff(height=1.0, speed=0.5):
+        raise RuntimeError("Take off failed")
+
+    # Ask for a point behind the wall
+    drone.navigate_to(6.0, 0.0, 1.0, speed=1.0, wait=False)
+    if not drone.navigate_to.wait_to_result():
+        raise RuntimeError("Navigation failed")
+
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+drone.load_module("navigate_to")
+
+try:
+    fly(drone)
+finally:
+    # Whatever happened, land and hand control back
+    drone.land(speed=0.5)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+- `navigate_to` takes the goal in metres in `earth` and a speed in m/s. The planner flies every
+  path at a height of 1 m, whatever the goal says, so the take-off goes to 1 m too.
+- Called on its own, `navigate_to` always returns `None`. Starting it with `wait=False` and then
+  calling `wait_to_result()` gives you `True` or `False`, like the other behaviors.
+- Called this way, the drone turns to face the x axis of `earth`. To keep its heading, call
+  `drone.navigate_to.navigate_to(x, y, z, speed)` instead.
+
+Run it. The drone takes off, then the script stops with an error and the drone lands:
+
+```console noCopy
+as2_python_api.behavior_actions.behavior_handler.BehaviorHandler.GoalRejected: Goal Rejected
+```
+
+The planner's terminal says why:
+
+```console noCopy
+[ERROR] [...] [drone0.path_planner]: Path to goal not found. Goal Rejected.
+```
+
+The point is behind the wall, in cells the lidar hasn't seen. The planner treats unknown cells as
+obstacles, so it found no way there and rejected the goal. A rejected goal leaves the planner ready
+for the next one.
+
+</Step>
+<Step>
+
+### Look behind the wall and fly home
+
+Let the lidar see both sides of the wall first. Fly around it with `go_to`, on a route that's
+clear, then ask the planner for the way home. Replace `fly` in `plan.py`:
+
+```python title="plan.py"
+def fly(drone: DroneInterface) -> None:
+    """Fly the mission. Raises an error if a behavior fails."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    # The path planner flies at 1 m, so take off to that height
+    if not drone.takeoff(height=1.0, speed=0.5):
+        raise RuntimeError("Take off failed")
+
+    # Fly around the wall, so the lidar sees both sides of it
+    for x, y in [(0.0, 4.0), (6.0, 4.0), (6.0, 0.0)]:
+        if not drone.go_to(x, y, 1.0, speed=1.0):
+            raise RuntimeError(f"Couldn't reach ({x}, {y})")
+
+    # Fly home. The straight line crosses the wall, so the planner goes around it
+    drone.navigate_to(0.0, 0.0, 1.0, speed=1.0, wait=False)
+    if not drone.navigate_to.wait_to_result():
+        raise RuntimeError("Navigation failed")
+
+    x, y, z = drone.position
+    print(f"Home, at x={x:.2f} y={y:.2f} z={z:.2f}")
+```
+
+Run it. The flight takes a little over a minute:
+
+```console noCopy
+Home, at x=-0.05 y=-0.34 z=1.00
+```
+
+The drone flies a lap to the far side of the wall, then comes home around one end of it, a little
+over 1 m from the corner. The map server kept everything the lidar saw on the lap, so this time the
+planner found a path. The drone ends up within about 30 cm of the goal.
+
+In RViz, add a **Marker** display on `/drone0/plugin_viz/marker` to see the planned path, and a
+**Map** display on `/drone0/plugin_viz/obstacle_map` to see the obstacles grown by the safety
+distance.
+
+</Step>
+<Step>
+
+### Run it again
+
+<Callout type="warn" title="Restart the planner between goals">
+  The path planner handles one goal per run. Once a goal has ended, the next one reports the old
+  result at once, while the drone is still flying the new path. Stop the planner with Ctrl+C and
+  start it again before each new goal. Rejected goals don't count.
+</Callout>
+
+Restart the planner, then run `plan.py` again. The map server still has the whole map, so you can
+also drop the lap and send the drone straight to the far side, to x = 6 and y = 0.
+
+</Step>
+<Step>
+
+### Stop everything
+
+Stop the lidar, the map server and the planner with Ctrl+C in their terminals, then the drone and
+the ground station:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+</Step>
+</Steps>
+
+## What you saw
+
+| Part | What it did |
+| --- | --- |
+| `fake_lidar.py` | Stood in for a lidar, publishing scans on `sensor_measurements/lidar/scan` |
+| [Map server](/docs/plugins/map-server) | Built the occupancy grid on `map`, and kept every cell it saw |
+| [Path planner](/docs/plugins/path-planning) | Planned a path on the grid when the goal arrived, keeping 1 m from the wall |
+| [Follow path](/docs/plugins/motion-behaviors) | Flew the planned path, one waypoint per cell |
+
+## Going further
+
+- **More obstacles.** Add boxes to `BOXES`, restart the lidar and the map server, and fly the lap
+  again. The map server never forgets an obstacle, so restart it whenever you change the world.
+- **Paths through open space.** Start the planner with `plugin_name:=voronoi`. It plans on the map
+  server's `map_filtered` and keeps to the middle of free space rather than taking the shortest
+  path.
+- **A real sensor.** Stop `fake_lidar.py` and let a real lidar publish the scans. In Gazebo, a
+  `planar_lidar` sensor named `lidar` publishes on the same topic. The
+  [Gazebo simulation](/docs/aerial-platforms/gazebo-simulation) page shows how to add sensors to a
+  drone.
+- **A map you already have.** The planner only needs an `OccupancyGrid` on `map`, in the `earth`
+  frame and published again every so often. Any node that publishes one can take the map server's
+  place.
+- **Plan once, then fly.** The planner doesn't replan while flying, so obstacles seen after the
+  goal arrives aren't avoided. The [path planning](/docs/plugins/path-planning#things-to-know) page
+  lists what else to know.
+
+## Next steps
+
+<Cards>
+  <Card title="Path planning" href="/docs/plugins/path-planning" description="The A* and Voronoi planners and their parameters." />
+  <Card title="Map server" href="/docs/plugins/map-server" description="How scans become a grid, and the depth camera and point cloud presets." />
+  <Card title="From simulation to a real drone" href="/docs/tutorials/real-drone" description="Fly your mission on a Crazyflie or a Tello." />
+</Cards>

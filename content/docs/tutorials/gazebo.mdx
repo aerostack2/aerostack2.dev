@@ -1,0 +1,352 @@
+---
+title: Move to Gazebo
+description: Fly the same missions in a 3D world, with sensors and cameras.
+icon: Mountain
+---
+
+In this tutorial you move from the multirotor simulator to [Gazebo](https://gazebosim.org), a 3D
+simulator with physics and sensors. You fly the mission from
+[A mission in Python](/docs/tutorials/python-mission) in it, look at the drone's camera, change the
+world and fly three drones. The mission script stays the same, apart from one argument.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** This tutorial reuses its
+  `my_mission.py`. [Several drones](/docs/tutorials/multiple-drones) helps for the last step.
+- **Gazebo is installed.** Installing Aerostack2 installs it too, Gazebo Fortress on ROS 2 Humble and
+  Gazebo Harmonic on ROS 2 Jazzy. The project's Pixi environment includes it.
+- **tmux and tmuxinator are installed**, as in the [Quickstart](/docs/getting-started/quickstart).
+
+## What changes
+
+Only the aerial platform and its configuration. The state estimator, the motion controller, the
+behaviors and the Python API are the same packages, started the same way.
+
+| | Multirotor simulator | Gazebo |
+| --- | --- | --- |
+| Project | `project_as2_multirotor_simulator` | `project_gazebo` |
+| Aerial platform | `as2_platform_multirotor_simulator` | `as2_platform_gazebo`, one per drone, plus one simulation for all of them |
+| World | `config/world.yaml`, with a pose per drone | `config/world.yaml`, with a model, a pose and sensors per drone, and objects |
+| Clock | The computer's | The simulation's, so every node runs with `use_sim_time` |
+| Sensors | None | Cameras, lidars, GPS, IMU and more, published on ROS 2 topics |
+
+<Steps>
+<Step>
+
+### Get the project
+
+```bash
+git clone https://github.com/aerostack2/project_gazebo.git
+cd project_gazebo
+```
+
+It has the same layout as the Quickstart project, with the same scripts and missions.
+
+</Step>
+<Step>
+
+### Start the drone
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+The tmux session `drone0` has the same windows as in the Quickstart. The `platform` window now
+runs three things:
+
+- **The simulation**, with no window of its own. It loads `config/world.yaml`, spawns the drone
+  and bridges its topics to ROS 2.
+- **The Gazebo window**, which connects to the running simulation. Closing it doesn't stop the
+  simulation, and running its command again reopens it.
+- **The Gazebo platform**, which takes the commands from Aerostack2 and sends them to the drone in
+  Gazebo.
+
+Gazebo takes a while to start the first time. The drone appears at the origin, on the ground.
+
+<Callout title="On ROS 2 Humble">
+  The pane for the Gazebo window runs `gz sim -g`, which is the command on Gazebo Harmonic. Gazebo
+  Fortress calls it `ign gazebo -g`. If that pane shows an error, run `ign gazebo -g` in it.
+</Callout>
+
+</Step>
+<Step>
+
+### Open the ground station
+
+In a second terminal, from the project folder:
+
+```bash tab="apt, source or Docker"
+./launch_ground_station.bash -v
+```
+
+```bash tab="Pixi"
+pixi run ground-station -v
+```
+
+In this project RViz only opens with `-v`. Add `-t` for the keyboard teleoperation, as in
+[Fly by hand](/docs/tutorials/fly-by-hand).
+
+</Step>
+<Step>
+
+### Fly your mission
+
+Copy `my_mission.py` from the Quickstart project into this folder. Change one line, the one that
+creates the `DroneInterface`:
+
+```python title="my_mission.py"
+drone = DroneInterface(drone_id="drone0", use_sim_time=True)
+```
+
+Gazebo publishes its own clock on `/clock`, and every node in the project runs on it. The project
+turns this on for all of them in `config/config.yaml`:
+
+```yaml title="config/config.yaml (excerpt)"
+/**:
+  ros__parameters:
+    use_sim_time: true
+```
+
+With `use_sim_time=True` the script follows the simulation clock too, so the goals it sends are
+stamped with the same time as the rest of the stack. The project's own missions, like `mission.py`,
+already do this.
+
+Run it:
+
+```bash tab="apt, source or Docker"
+python3 my_mission.py
+```
+
+```bash tab="Pixi"
+pixi run python3 my_mission.py
+```
+
+The drone flies the same points, the same path and the same stopped flight as in the multirotor
+simulator, now in Gazebo:
+
+```console noCopy
+Flying, at x=-2.00 y=-0.01 z=1.44
+Flying, at x=-1.96 y=-0.08 z=1.43
+Flying, at x=-1.62 y=-0.08 z=1.43
+...
+Stopped at x=0.92 y=-0.06 z=1.45
+```
+
+The position the script reads still comes from the state estimator. Here the estimator takes the
+drone's exact pose from Gazebo, its ground truth.
+
+</Step>
+<Step>
+
+### Look at the camera
+
+The drone in `config/world.yaml` carries a GPS and a gimbal with an HD camera:
+
+```yaml title="config/world.yaml"
+world_name: "empty"
+origin:
+    latitude: 40.4405287
+    longitude: -3.6898277
+    altitude: 100.0
+drones:
+  - model_type: "quadrotor_base"
+    model_name: "drone0"
+    flight_time: 60
+    xyz:
+      - 0.0
+      - 0.0
+      - 0.3
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "gimbal_speed"
+        model_name: "gimbal"
+        payload:
+          model_type: "hd_camera"
+          model_name: "camera"
+```
+
+Each sensor publishes under the drone's `sensor_measurements`, named after its `model_name`. A
+sensor on a gimbal also gets the gimbal's name. In a third terminal, list them. With Pixi, start
+each command with `pixi run`.
+
+```bash
+ros2 topic list | grep sensor_measurements
+```
+
+```console noCopy
+/drone0/sensor_measurements/battery
+/drone0/sensor_measurements/gimbal/attitude
+/drone0/sensor_measurements/gimbal/camera/camera_info
+/drone0/sensor_measurements/gimbal/camera/image_raw
+/drone0/sensor_measurements/gimbal/twist
+/drone0/sensor_measurements/gps
+/drone0/sensor_measurements/imu
+```
+
+Check that images arrive:
+
+```bash
+ros2 topic hz /drone0/sensor_measurements/gimbal/camera/image_raw
+```
+
+To see them, click **Add** in RViz, choose **By topic**, and pick **Image** under
+`/drone0/sensor_measurements/gimbal/camera/image_raw`.
+
+They're ordinary `sensor_msgs/Image` messages, so any ROS 2 node can use them, like the
+[perception behaviors](/docs/plugins/perception) or your own code. The project also starts the
+[point gimbal behavior](/docs/plugins/payload), which aims the camera.
+
+</Step>
+<Step>
+
+### Change the world
+
+Edit `config/world.yaml`. Replace the gimbal with a camera looking forward and a lidar, and stand a
+gate with ArUco markers five metres ahead of the drone:
+
+```yaml title="config/world.yaml"
+world_name: "empty"
+origin:
+  latitude: 40.4405287
+  longitude: -3.6898277
+  altitude: 100.0
+drones:
+  - model_type: "quadrotor_base"
+    model_name: "drone0"
+    flight_time: 60
+    xyz: [0.0, 0.0, 0.3]
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "hd_camera"
+        model_name: "front_camera"
+        xyz: [0.1, 0.0, 0.0]
+      - model_type: "planar_lidar"
+        model_name: "lidar"
+        xyz: [0.0, 0.0, 0.1]
+objects:
+  - model_type: "aruco_gate_1"
+    model_name: "gate"
+    xyz: [5.0, 0.0, 0.0]
+```
+
+- `xyz` under a sensor places it on the drone, in metres from its centre.
+- `objects` adds models to the world. `model_type` is the name of a model folder in
+  `as2_gazebo_assets`, or in a folder listed in `GZ_SIM_RESOURCE_PATH`.
+- `flight_time` gives the drone a battery that lasts that many minutes.
+
+The world is built when the simulation starts, so stop everything and start it again:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+pixi run launch
+```
+
+The gate stands in front of the drone, and the new sensors have their own topics:
+
+| Topic | Contents |
+| --- | --- |
+| `/drone0/sensor_measurements/front_camera/image_raw` | The camera's images |
+| `/drone0/sensor_measurements/front_camera/camera_info` | Its calibration |
+| `/drone0/sensor_measurements/lidar/scan` | The lidar as a laser scan |
+| `/drone0/sensor_measurements/lidar/points` | The lidar as a point cloud |
+
+The [Gazebo](/docs/aerial-platforms/gazebo-simulation) page lists every drone, sensor and gimbal
+model.
+
+</Step>
+<Step>
+
+### Fly several drones
+
+With `-m`, the project reads `config/world_swarm.yaml`. It places three drones where the
+Quickstart's swarm world does, at x = -2, 2 and 0:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+./launch_as2.bash -m
+./launch_ground_station.bash -m -v
+```
+
+```bash tab="Pixi"
+pixi run stop
+pixi run launch -m
+pixi run ground-station -m -v
+```
+
+One simulation holds the three drones, and each drone gets its own tmux session and platform. Copy
+`swarm.py` from [Several drones](/docs/tutorials/multiple-drones) and make the same change:
+
+```python title="swarm.py"
+drones = [DroneInterface(drone_id=ns, use_sim_time=True) for ns in NAMESPACES]
+```
+
+```bash tab="apt, source or Docker"
+python3 swarm.py
+```
+
+```bash tab="Pixi"
+pixi run python3 swarm.py
+```
+
+```console noCopy
+Take off: True
+Line: True
+drone0 [0.08, -2.07, 0.91]
+drone1 [-0.05, -0.0, 1.44]
+drone2 [0.01, 2.01, 1.96]
+Land: True
+```
+
+</Step>
+<Step>
+
+### Stop everything
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+This closes the tmux sessions and stops Gazebo.
+
+</Step>
+</Steps>
+
+## What else changed
+
+You didn't have to touch these, but they're why the same mission works. They're all in the
+project's configuration.
+
+- **The state estimator** uses the [ground truth](/docs/concepts/state-estimator#ground-truth)
+  plugin, which reads the drone's exact pose and speed from Gazebo.
+- **The drone's body frame** is called `drone0` in Gazebo, not `drone0/base_link`, so the state
+  estimator has `base_frame_id: ""`. The
+  [Gazebo](/docs/aerial-platforms/gazebo-simulation#with-the-rest-of-the-stack) page explains why.
+- **The motion controller** is the PID speed controller, as in the Quickstart, because the Gazebo
+  platform takes speeds. Its gains are in `config/pid_speed_controller.yaml`.
+
+Behavior trees work the same way. The project's `mission_execution` window loads
+`trees/square.xml` with `use_sim_time:=true`, and `mission_behavior_tree.py` starts it, as in
+[A mission as a behavior tree](/docs/tutorials/behavior-tree-mission).
+
+## Next steps
+
+<Cards>
+  <Card title="Planning around obstacles" href="/docs/tutorials/path-planning" description="Fly around obstacles with the map server and path planning." />
+  <Card title="From simulation to a real drone" href="/docs/tutorials/real-drone" description="Fly your mission on a Crazyflie or a Tello." />
+  <Card title="Gazebo" href="/docs/aerial-platforms/gazebo-simulation" description="Every model, sensor and launch option of the Gazebo platform." />
+</Cards>

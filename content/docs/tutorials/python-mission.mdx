@@ -1,0 +1,260 @@
+---
+title: A mission in Python
+description: Write a mission with the Python API that reads the drone's state, flies to points, follows a path and always lands.
+icon: FileCode
+---
+
+In this tutorial you write a mission with the [Python API](/docs/concepts/missions#python-api), one
+piece at a time. It reads the drone's state, flies to points and along a path, stops a flight
+halfway, and lands whatever happens.
+
+## Before you start
+
+- **You've done [Fly by hand](/docs/tutorials/fly-by-hand).** You know how to start the drone and
+  what its parts do.
+- **The drone is running.** Start it from the Quickstart project folder and leave it running for
+  the whole tutorial. The scripts go in the same folder.
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+Run every script from a second terminal, with `python3 <script>.py`, or with
+`pixi run python3 <script>.py` on Pixi.
+
+<Steps>
+<Step>
+
+### Connect and read the state
+
+`DroneInterface` connects to one drone by its namespace. Start with a script that only reads:
+
+```python title="state.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+print("Info:", drone.info)
+print("Position:", drone.position)
+print("Orientation:", drone.orientation)
+print("Speed:", drone.speed)
+
+drone.shutdown()
+rclpy.shutdown()
+```
+
+```console noCopy
+Info: {'connected': True, 'armed': False, 'offboard': False, 'state': 0, 'yaw_mode': 0, 'control_mode': 0}
+Position: [0.0, 0.0, 0.0]
+Orientation: [0.0, 0.0, 0.0]
+Speed: [0.0, 0.0, 0.0]
+```
+
+- `info` comes from the platform. `state` is the platform status, where 0 is disarmed, 1 landed and
+  3 flying. The rest are listed under
+  [PlatformStatus](/docs/ros2-interfaces/as2-msgs#platformstatus-and-platformstatemachineevent).
+- `position` is `[x, y, z]` in metres and `orientation` is `[roll, pitch, yaw]` in radians, both in
+  the `earth` frame. `speed` is `[vx, vy, vz]` in m/s.
+- The values update in the background while the script runs, so read them again whenever you need
+  them.
+
+Always end with `shutdown()`, which closes the connection to the drone.
+
+</Step>
+<Step>
+
+### Take off and land
+
+Create `my_mission.py`. The flight goes in a function of its own, so the end of the script can land
+the drone whatever happens inside it:
+
+```python title="my_mission.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+
+def fly(drone: DroneInterface) -> None:
+    """Fly the mission. Raises an error if a behavior fails."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    if not drone.takeoff(height=1.5, speed=0.5):
+        raise RuntimeError("Take off failed")
+
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+try:
+    fly(drone)
+finally:
+    # Whatever happened, land and hand control back
+    drone.land(speed=0.5)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+- `arm()` starts the motors and `offboard()` hands control of the drone to Aerostack2. Both return
+  `True` when they succeed.
+- `takeoff()` and `land()` each run a [behavior](/docs/concepts/behaviors) and wait for it to end.
+  They return `True` if it succeeded.
+- `try` and `finally` make the script land even when `fly` raises an error, like a behavior that
+  fails. `manual()` then hands control back to the platform.
+
+Run it. The drone climbs to 1.5 m, then lands.
+
+</Step>
+<Step>
+
+### Fly to points
+
+Add two flights at the end of `fly`:
+
+```python title="my_mission.py"
+    # Fly to a point, keeping the heading the drone has now
+    drone.go_to(2.0, 0.0, 1.5, speed=1.0)
+
+    # Fly to the next one facing where it's going
+    drone.go_to.go_to_point_path_facing([2.0, 2.0, 1.5], speed=1.0)
+```
+
+`go_to` takes the point in metres in `earth` and a speed in m/s. By default the drone keeps its
+heading. The helpers on `drone.go_to` choose another way to turn:
+
+| Call | Heading |
+| --- | --- |
+| `go_to(x, y, z, speed)` | Kept as it is |
+| `go_to.go_to_point_path_facing(point, speed)` | Turned toward the point |
+| `go_to.go_to_point_with_yaw(point, speed, angle)` | Turned to `angle`, in radians |
+
+</Step>
+<Step>
+
+### Follow a path
+
+`follow_path` flies through a list of points without stopping at each one. Add it after the go-tos:
+
+```python title="my_mission.py"
+    # Follow a path through several points without stopping at each one
+    path = [[0.0, 2.0, 2.0], [-2.0, 2.0, 2.0], [-2.0, 0.0, 1.5]]
+    drone.follow_path.follow_path_with_path_facing(path, speed=1.0)
+```
+
+The drone faces along the path as it flies. `follow_path_with_keep_yaw` and `follow_path_with_yaw`
+keep the heading or fix it instead.
+
+</Step>
+<Step>
+
+### Don't wait
+
+Every behavior call waits until the behavior ends, unless you pass `wait=False`. Then it returns
+right away, and the script can watch the drone and change its mind. Add a flight toward a point
+10 m away, and stop it after three seconds:
+
+```python title="my_mission.py"
+    # Start a long flight without waiting, and stop it after three seconds
+    drone.go_to(10.0, 0.0, 1.5, speed=1.0, wait=False)
+    start = time.time()
+    while time.time() - start < 3.0:
+        x, y, z = drone.position
+        print(f"Flying, at x={x:.2f} y={y:.2f} z={z:.2f}")
+        time.sleep(0.5)
+    drone.go_to.stop()
+    x, y, z = drone.position
+    print(f"Stopped at x={x:.2f} y={y:.2f} z={z:.2f}")
+
+    drone.go_to(0.0, 0.0, 1.5, speed=1.0)
+```
+
+`stop()` ends the behavior, and the drone hovers where it is. The behavior also has `pause()`,
+`resume()` and `modify()`, and its `status` tells you whether it's running. The last go-to brings
+the drone back above the origin, and then `finally` lands it.
+
+</Step>
+<Step>
+
+### Run the whole mission
+
+```python title="my_mission.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+
+def fly(drone: DroneInterface) -> None:
+    """Fly the mission. Raises an error if a behavior fails."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+
+    if not drone.takeoff(height=1.5, speed=0.5):
+        raise RuntimeError("Take off failed")
+
+    # Fly to a point, keeping the heading the drone has now
+    drone.go_to(2.0, 0.0, 1.5, speed=1.0)
+
+    # Fly to the next one facing where it's going
+    drone.go_to.go_to_point_path_facing([2.0, 2.0, 1.5], speed=1.0)
+
+    # Follow a path through several points without stopping at each one
+    path = [[0.0, 2.0, 2.0], [-2.0, 2.0, 2.0], [-2.0, 0.0, 1.5]]
+    drone.follow_path.follow_path_with_path_facing(path, speed=1.0)
+
+    # Start a long flight without waiting, and stop it after three seconds
+    drone.go_to(10.0, 0.0, 1.5, speed=1.0, wait=False)
+    start = time.time()
+    while time.time() - start < 3.0:
+        x, y, z = drone.position
+        print(f"Flying, at x={x:.2f} y={y:.2f} z={z:.2f}")
+        time.sleep(0.5)
+    drone.go_to.stop()
+    x, y, z = drone.position
+    print(f"Stopped at x={x:.2f} y={y:.2f} z={z:.2f}")
+
+    drone.go_to(0.0, 0.0, 1.5, speed=1.0)
+
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+
+try:
+    fly(drone)
+finally:
+    # Whatever happened, land and hand control back
+    drone.land(speed=0.5)
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+The flight takes about half a minute. While the drone flies toward the far point, the script prints
+its position:
+
+```console noCopy
+Flying, at x=-2.00 y=0.08 z=1.53
+Flying, at x=-1.73 y=0.04 z=1.50
+Flying, at x=-1.18 y=0.03 z=1.50
+...
+Stopped at x=1.48 y=0.01 z=1.50
+```
+
+</Step>
+</Steps>
+
+## Next steps
+
+<Cards>
+  <Card title="A mission as a behavior tree" href="/docs/tutorials/behavior-tree-mission" description="Write a mission as a tree instead of a script." />
+  <Card title="Several drones" href="/docs/tutorials/multiple-drones" description="Fly three drones from one script." />
+  <Card title="Missions" href="/docs/concepts/missions" description="The Python API, behavior trees and the mission interpreter side by side." />
+</Cards>

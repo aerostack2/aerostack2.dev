@@ -1,0 +1,183 @@
+---
+title: Fly by hand
+description: Take off, fly and land a simulated drone with the keyboard, and watch what each part of Aerostack2 does.
+icon: Gamepad2
+---
+
+In this tutorial you fly the simulated drone from the keyboard and watch it from three places at
+once, the alphanumeric viewer, RViz and the ROS 2 command line. By the end you'll know which part of
+Aerostack2 does what when the drone moves.
+
+## Before you start
+
+- **You've done the [Quickstart](/docs/getting-started/quickstart).** This tutorial uses the same
+  project, `project_as2_multirotor_simulator`, and runs every command from its folder.
+- **The keyboard teleoperation can run.** Its window is built with PySimpleGUI, which isn't
+  installed with Aerostack2:
+
+```bash tab="apt, source or Docker"
+sudo apt install python3-tk python3-scipy
+pip install PySimpleGUI-4-foss
+```
+
+```bash tab="Pixi"
+pixi add tk scipy
+pixi add --pypi pysimplegui-4-foss
+```
+
+On Ubuntu 24.04, pip refuses to install into the system Python, so add `--break-system-packages`.
+
+<Steps>
+<Step>
+
+### Start the drone
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+```
+
+```bash tab="Pixi"
+pixi run launch
+```
+
+The tmux session opens on the alphanumeric viewer. Its summary tab shows the drone connected,
+disarmed and not in offboard, at the origin. Leave it where you can see it.
+
+</Step>
+<Step>
+
+### Open the ground station with the keyboard
+
+In a second terminal, start the ground station with `-t` for the keyboard teleoperation:
+
+```bash tab="apt, source or Docker"
+./launch_ground_station.bash -t
+```
+
+```bash tab="Pixi"
+pixi run ground-station -t
+```
+
+RViz opens with the drone at the origin, and so does the keyboard teleoperation window. The window
+only reads keys while it has focus, so click it before pressing anything.
+
+</Step>
+<Step>
+
+### Take off
+
+Press `t`. The window arms the drone, switches it to offboard and takes off to 1 m. In the viewer,
+armed and offboard turn on, and the status changes to taking off and then to flying. In RViz the
+drone rises and starts drawing its trail.
+
+Take off is a [behavior](/docs/concepts/behaviors). The window asked the take-off behavior to
+climb, and the behavior sent references to the motion controller until the drone reached the
+height.
+
+</Step>
+<Step>
+
+### Move in steps
+
+The window opens in Pose mode. Each arrow moves the drone 1 m along the `earth` axes, `w` and `s`
+move it 1 m up or down, and `a` and `d` turn it.
+
+Fly a few steps and watch the viewer. The controller's mode reads position, because every key
+sends a new position to reach. These moves don't go through a behavior. The window sends them
+straight to the motion controller, on `motion_reference/pose`.
+
+</Step>
+<Step>
+
+### Move at a speed
+
+Click **Speed** on the left of the window. Now each key sends a velocity, and the drone moves for as
+long as you hold the key. Let go and it stops.
+
+The controller's mode in the viewer changes to speed, and the references now go out on
+`motion_reference/twist`. Before sending the first one, the window asked the motion controller to
+switch modes, since a controller in position mode ignores speeds.
+
+</Step>
+<Step>
+
+### Look underneath
+
+With the drone flying, open a third terminal in the project folder. With Pixi, start each command
+with `pixi run`.
+
+The state estimator publishes where the drone is. This is the pose the viewer and RViz show:
+
+```bash
+ros2 topic echo /drone0/self_localization/pose
+```
+
+The platform reports whether the drone is connected, armed and in offboard, and its status:
+
+```bash
+ros2 topic echo --once /drone0/platform/info
+```
+
+Each behavior is a ROS 2 action server in the drone's namespace:
+
+```bash
+ros2 action list
+```
+
+```console noCopy
+/drone0/FollowPathBehavior
+/drone0/GoToBehavior
+/drone0/LandBehavior
+/drone0/TakeoffBehavior
+```
+
+Everything the drone runs lives under `/drone0`. That's how several drones share one ROS 2 network,
+as you'll see in [Several drones](/docs/tutorials/multiple-drones).
+
+</Step>
+<Step>
+
+### Land
+
+Press `l`. The land behavior brings the drone down and disarms it, and the viewer shows it
+disarmed again.
+
+The space bar hovers the drone where it is. Delete is the emergency stop. It sends the kill switch,
+which stops the motors in mid-air, so keep it for emergencies and restart the window after using
+it.
+
+</Step>
+<Step>
+
+### Stop everything
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+</Step>
+</Steps>
+
+## What you saw
+
+| Part | What it did |
+| --- | --- |
+| [Aerial platform](/docs/concepts/aerial-platform) | The simulator, armed, switched to offboard and flew the drone |
+| [State estimator](/docs/concepts/state-estimator) | Published the drone's pose and speed on `self_localization` |
+| [Motion controller](/docs/concepts/motion-controller) | Turned position and speed references into commands for the platform |
+| [Behaviors](/docs/concepts/behaviors) | Took off and landed, as action servers |
+| [User interfaces](/docs/user-interfaces) | Sent the commands and showed the state |
+
+The [keyboard teleoperation](/docs/user-interfaces/keyboard-teleoperation) and the
+[alphanumeric viewer](/docs/user-interfaces/alphanumeric-viewer) pages cover every key and tab.
+
+## Next steps
+
+<Cards>
+  <Card title="A mission in Python" href="/docs/tutorials/python-mission" description="Do the same from a script, and more." />
+  <Card title="Architecture" href="/docs/concepts/architecture" description="How the parts you just saw fit together." />
+</Cards>

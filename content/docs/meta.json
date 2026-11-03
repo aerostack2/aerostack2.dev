@@ -2,8 +2,8 @@
   "pages": [
     "index",
     "getting-started",
+    "tutorials",
     "concepts",
-    "examples",
     "aerial-platforms",
     "plugins",
     "user-interfaces",

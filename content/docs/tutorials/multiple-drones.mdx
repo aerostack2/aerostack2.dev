@@ -1,0 +1,190 @@
+---
+title: Several drones
+description: Start three simulated drones and fly them together from one Python script.
+icon: Users
+---
+
+In this tutorial you start three drones and fly them from one script. They take off together, line
+up at three heights and land together.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** This tutorial builds on
+  `DroneInterface` and `wait=False`.
+
+## One namespace per drone
+
+Every drone runs its own copy of the stack, the platform, state estimator, motion controller and
+behaviors, under its own namespace, like `drone0`, `drone1` and `drone2`. Their topics and actions
+never clash, so the drones share one ROS 2 network without knowing about each other.
+
+They do share one frame. Every drone's position is given in `earth`, so a point means the same place
+for all of them. Each drone starts where the world file puts it. The
+[Frames](/docs/concepts/frames) page explains how `earth` relates to each drone's own frames.
+
+<Steps>
+<Step>
+
+### Start three drones
+
+With `-m`, the Quickstart project reads `config/world_swarm.yaml`, which places three drones a few
+metres apart:
+
+```yaml title="config/world_swarm.yaml (excerpt)"
+drone0:
+  platform:
+    ros__parameters:
+      vehicle_initial_pose:
+        x: -2.0
+        y: 0.0
+        z: 0.0
+```
+
+`drone1` starts at x = 2 and `drone2` at the origin. Start them, and the ground station for all
+three:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash -m
+./launch_ground_station.bash -m
+```
+
+```bash tab="Pixi"
+pixi run launch -m
+pixi run ground-station -m
+```
+
+Each drone gets a tmux session named after it, with the same windows as a single drone, and your
+terminal attaches to `drone0`'s. RViz shows all three.
+
+</Step>
+<Step>
+
+### Connect to every drone
+
+One `DroneInterface` per drone, each with its namespace:
+
+```python
+NAMESPACES = ["drone0", "drone1", "drone2"]
+drones = [DroneInterface(drone_id=ns) for ns in NAMESPACES]
+```
+
+Calling `drone.takeoff()` on each in turn would work, but each call waits for its behavior, so the
+drones would take off one after another. To fly them together, start every behavior with
+`wait=False`, then wait for all of them. A behavior's `wait_to_result()` waits until it ends and
+returns whether it succeeded:
+
+```python
+def wait_all(behaviors) -> bool:
+    """Wait until every behavior ends. True if all of them succeeded."""
+    results = [behavior.wait_to_result() for behavior in behaviors]
+    return all(results)
+```
+
+The behaviors run at the same time, so waiting for them one by one takes as long as the slowest.
+
+</Step>
+<Step>
+
+### Fly together
+
+Create `swarm.py` in the project folder:
+
+```python title="swarm.py"
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+
+NAMESPACES = ["drone0", "drone1", "drone2"]
+
+
+def wait_all(behaviors) -> bool:
+    """Wait until every behavior ends. True if all of them succeeded."""
+    results = [behavior.wait_to_result() for behavior in behaviors]
+    return all(results)
+
+
+rclpy.init()
+drones = [DroneInterface(drone_id=ns) for ns in NAMESPACES]
+
+try:
+    for drone in drones:
+        drone.arm()
+        drone.offboard()
+
+    # Start every take off, then wait for all of them
+    for drone in drones:
+        drone.takeoff(height=1.5, speed=0.5, wait=False)
+    print("Take off:", wait_all([drone.takeoff for drone in drones]))
+
+    # Move to a line along y, each drone at a different height
+    for i, drone in enumerate(drones):
+        drone.go_to(0.0, 2.0 * (i - 1), 1.0 + 0.5 * i, speed=1.0, wait=False)
+    print("Line:", wait_all([drone.go_to for drone in drones]))
+
+    for drone in drones:
+        print(drone.drone_id, [round(v, 2) for v in drone.position])
+finally:
+    for drone in drones:
+        drone.land(speed=0.5, wait=False)
+    print("Land:", wait_all([drone.land for drone in drones]))
+    for drone in drones:
+        drone.manual()
+        drone.shutdown()
+    rclpy.shutdown()
+```
+
+Run it:
+
+```bash tab="apt, source or Docker"
+python3 swarm.py
+```
+
+```bash tab="Pixi"
+pixi run python3 swarm.py
+```
+
+The three drones take off together, fly to a line along y, at 1, 1.5 and 2 m, and land together:
+
+```console noCopy
+Take off: True
+Line: True
+drone0 [-0.03, -1.97, 1.01]
+drone1 [0.04, -0.0, 1.5]
+drone2 [0.0, 1.87, 1.96]
+Land: True
+```
+
+The positions are all in `earth`. `drone0` started at x = -2 and ended at y = -2, the place the
+script sent it to, wherever it started from.
+
+</Step>
+<Step>
+
+### Stop everything
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+</Step>
+</Steps>
+
+## Going further
+
+- **Choreographies.** The project's `mission_swarm.py` flies the three drones through a sequence of
+  formations, built the same way.
+- **One script per drone.** Each drone can also run its own mission, from its own script or its own
+  behavior tree. Nothing ties a drone to the script that started it.
+- **Keep them apart.** Nothing stops two drones from flying into each other. The
+  [swarm flocking](/docs/concepts/behaviors#swarm-flocking) behavior flies a group in formation
+  around a moving centroid.
+
+## Next steps
+
+<Cards>
+  <Card title="Move to Gazebo" href="/docs/tutorials/gazebo" description="Fly the same missions in a 3D world." />
+  <Card title="Frames" href="/docs/concepts/frames" description="How earth, map, odom and base_link relate." />
+</Cards>

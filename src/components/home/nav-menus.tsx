@@ -3,12 +3,12 @@
 import { NavigationMenu } from "@base-ui/react/navigation-menu";
 import {
   ArrowRight,
-  Boxes,
   ChevronDown,
   CircleDot,
   FlaskConical,
   Gamepad2,
   GitFork,
+  GraduationCap,
   Hammer,
   Layers,
   MessagesSquare,
@@ -51,10 +51,11 @@ const learn: MenuItem[] = [
     href: "/docs/concepts",
   },
   {
-    icon: <Boxes />,
-    title: "Examples",
-    description: "Ready-to-run projects for Gazebo, Crazyflie, DJI and more.",
-    href: "/docs/examples",
+    icon: <GraduationCap />,
+    title: "Tutorials",
+    description:
+      "Step-by-step lessons, from flying by hand to the main modules.",
+    href: "/docs/tutorials",
   },
   {
     icon: <Workflow />,

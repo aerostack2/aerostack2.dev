@@ -1,0 +1,428 @@
+---
+title: State estimation
+description: Switch the state estimator from ground truth to odometry and to an emulated motion capture system, and see what changes.
+icon: Locate
+---
+
+In this tutorial you change where the drone's position comes from. You start with the simulator's
+ground truth, switch to odometry and watch it drift, then emulate a motion capture system and fuse
+it with the IMU. Each time you fly the same hover and compare what the
+[state estimator](/docs/concepts/state-estimator) says with where the drone really is.
+
+## Before you start
+
+- **You've done [A mission in Python](/docs/tutorials/python-mission).** You know how to start the
+  drone and run a script.
+- **The drone isn't running.** Every change in this tutorial is in `config/config.yaml` and needs a
+  restart, so stop the drone if it's flying.
+
+## What the simulator offers
+
+The multirotor simulator publishes three sources the estimator can read, all under `/drone0`:
+
+| Topic | What it is |
+| --- | --- |
+| `ground_truth/pose` | Where the drone really is, exactly |
+| `sensor_measurements/imu` | The IMU, with noise |
+| `sensor_measurements/odom` | Odometry the simulator works out from the IMU alone, so it drifts |
+
+A real drone has no ground truth. In the simulator you have one anyway, and that's what lets you
+measure how far off each estimator is.
+
+<Steps>
+<Step>
+
+### Write a script that compares
+
+`DroneInterface` is a ROS 2 node, so a script can subscribe to more topics through it. This one
+also reads the simulator's ground truth. It takes off, hovers for half a minute and prints, every
+five seconds, where the estimator thinks the drone is and where it really is.
+
+Create `drift.py` in the project folder:
+
+```python title="drift.py"
+import time
+
+import rclpy
+from as2_python_api.drone_interface import DroneInterface
+from geometry_msgs.msg import PoseStamped
+from rclpy.qos import qos_profile_sensor_data
+
+truth = [0.0, 0.0, 0.0]
+
+
+def on_truth(msg: PoseStamped) -> None:
+    """Keep the latest pose from the simulator."""
+    truth[:] = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
+
+
+def report(drone: DroneInterface, label: str) -> None:
+    """Print where the estimator thinks the drone is, and where it really is."""
+    ex, ey, ez = drone.position
+    tx, ty, tz = truth
+    error = ((ex - tx) ** 2 + (ey - ty) ** 2 + (ez - tz) ** 2) ** 0.5
+    print(f"{label:<9} estimate ({ex:6.2f}, {ey:6.2f}, {ez:5.2f})  "
+          f"truth ({tx:6.2f}, {ty:6.2f}, {tz:5.2f})  error {error:5.2f} m")
+
+
+def fly(drone: DroneInterface) -> None:
+    """Take off and hover for half a minute, reporting every five seconds."""
+    if not drone.arm() or not drone.offboard():
+        raise RuntimeError("Couldn't arm or switch to offboard")
+    if not drone.takeoff(height=1.5, speed=0.5):
+        raise RuntimeError("Take off failed")
+    for second in range(5, 31, 5):
+        time.sleep(5.0)
+        report(drone, f"Hover {second}s")
+
+
+rclpy.init()
+drone = DroneInterface(drone_id="drone0")
+drone.create_subscription(PoseStamped, "ground_truth/pose", on_truth, qos_profile_sensor_data)
+
+try:
+    fly(drone)
+finally:
+    drone.land(speed=0.5)
+    report(drone, "Landed")
+    drone.manual()
+    drone.shutdown()
+    rclpy.shutdown()
+```
+
+`drone.position` is what every mission sees. It comes from `self_localization/pose`, which the
+estimator publishes in `earth`. The ground truth is in `earth` too, so the two compare directly.
+
+</Step>
+<Step>
+
+### Fly on ground truth
+
+The Quickstart project starts with the `ground_truth` plugin, which passes the simulator's pose
+straight through:
+
+```yaml title="config/config.yaml (excerpt)"
+  state_estimator:
+    ros__parameters:
+      # Indoor Ground Truth
+      plugin_name: "ground_truth"
+      ground_truth:
+        # Use twist from the simulator instead of default (differentiate the pose).
+        twist_sub_topic: "ground_truth/twist"
+```
+
+Start the drone, and run the script from a second terminal:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+python3 drift.py
+```
+
+```bash tab="Pixi"
+pixi run launch
+pixi run python3 drift.py
+```
+
+The estimate and the truth are the same:
+
+```console noCopy
+Hover 5s  estimate ( -0.00,   0.00,  1.50)  truth ( -0.00,  -0.00,  1.50)  error  0.00 m
+Hover 10s estimate (  0.00,  -0.00,  1.50)  truth (  0.00,   0.00,  1.50)  error  0.00 m
+...
+Hover 30s estimate ( -0.00,   0.00,  1.50)  truth ( -0.00,   0.00,  1.50)  error  0.00 m
+Landed    estimate ( -0.00,  -0.00,  0.00)  truth ( -0.00,  -0.00,  0.00)  error  0.00 m
+```
+
+</Step>
+<Step>
+
+### Look at the frames
+
+The estimator also publishes the TF tree `earth → map → odom → base_link`, which
+[Frames](/docs/concepts/frames) explains. From a third terminal, print the transform between `map`
+and `odom`. With Pixi, start the command with `pixi run`.
+
+```bash
+ros2 run tf2_ros tf2_echo drone0/map drone0/odom
+```
+
+```console noCopy
+At time 0.0
+- Translation: [0.000, 0.000, 0.000]
+- Rotation: in Quaternion (xyzw) [0.000, 0.000, 0.000, 1.000]
+```
+
+It's zero, and "At time 0.0" means it's static. Ground truth has nothing to correct, so it puts
+`map` where the first pose was and the whole pose in `odom → base_link`. Stop `tf2_echo` with
+`Ctrl-C`, and stop the drone:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+```
+
+```bash tab="Pixi"
+pixi run stop
+```
+
+</Step>
+<Step>
+
+### Switch to raw odometry
+
+The `raw_odometry` plugin takes any odometry as it is. By default it reads
+`sensor_measurements/odom`, which is the simulator's odometry, so changing the plugin's name is
+enough. In `config/config.yaml`:
+
+```yaml title="config/config.yaml (excerpt)"
+  state_estimator:
+    ros__parameters:
+      plugin_name: "raw_odometry"
+```
+
+The `ground_truth` block below it can stay. Only the plugin you name reads its block. Start the
+drone again and check which plugin runs:
+
+```bash
+ros2 param get /drone0/state_estimator plugin_name
+```
+
+```console noCopy
+String value is: raw_odometry
+```
+
+Run `drift.py` again:
+
+```console noCopy
+Hover 5s  estimate ( -0.13,   0.53,  1.50)  truth (  0.00,  -0.00,  1.50)  error  0.55 m
+Hover 10s estimate ( -0.42,   2.19,  1.50)  truth (  0.00,  -0.00,  1.50)  error  2.23 m
+Hover 15s estimate ( -1.39,   5.65,  1.50)  truth (  0.00,  -0.00,  1.50)  error  5.82 m
+Hover 20s estimate ( -3.72,  11.47,  1.49)  truth (  0.00,  -0.00,  1.50)  error 12.06 m
+Hover 25s estimate ( -7.84,  18.76,  1.47)  truth (  0.00,  -0.00,  1.50)  error 20.33 m
+Hover 30s estimate (-14.74,  29.32,  1.43)  truth (  0.00,  -0.00,  1.50)  error 32.82 m
+Landed    estimate (  0.00,  -0.00, -0.00)  truth (  0.00,  -0.00,  0.00)  error  0.00 m
+```
+
+The drone stays put, but the estimate runs off by more than 30 m in half a minute. The simulator's
+odometry integrates a noisy IMU twice, so small errors grow fast. The direction changes from run to
+run. Once the drone lands, the simulator starts its odometry over from where the drone really is.
+
+The drone itself doesn't move because the simulator flies it on its own ground truth. Only what
+Aerostack2 believes changes, and the mission believes it too. At the end of the hover,
+`drone.position` put the drone 33 m from where it was. A go to started then would never end,
+because the drone would never seem to arrive.
+
+</Step>
+<Step>
+
+### See where the drift goes
+
+While `drift.py` hovers, print the two transforms the estimator owns, one at a time:
+
+```bash
+ros2 run tf2_ros tf2_echo drone0/map drone0/odom
+ros2 run tf2_ros tf2_echo drone0/odom drone0/base_link
+```
+
+`map → odom` stays at zero. All of the drift is in `odom → base_link`, which grows along with the
+estimate. Raw odometry has nothing absolute to correct it with, so the same drift shows up in the
+pose in `earth`.
+
+</Step>
+<Step>
+
+### Fly on the odometry too
+
+On a real drone without GPS or a camera, the autopilot would also fly on this odometry. The
+simulator can do the same. In `config/config.yaml`, uncomment `use_odom_for_control` under
+`platform`:
+
+```yaml title="config/config.yaml (excerpt)"
+  platform:
+    ros__parameters:
+      cmd_freq: 100.0  # Hz of platform commands send
+      # # Raw Odometry
+      use_odom_for_control: true  # Use odometry for control instead of ground truth (default: false)
+```
+
+Restart the drone and run `drift.py`:
+
+```console noCopy
+Hover 5s  estimate (  0.03,   0.06,  1.50)  truth ( -0.06,  -0.27,  1.50)  error  0.34 m
+...
+Hover 30s estimate ( -7.85,   9.09,  1.52)  truth (  5.68, -10.47,  1.45)  error 23.79 m
+Landed    estimate (  6.06, -10.88, -0.00)  truth (  6.06, -10.88,  0.00)  error  0.00 m
+```
+
+Now the drone itself wanders off, and lands more than 12 m from where it took off. Comment
+`use_odom_for_control` out again before the next step, so the simulator flies on ground truth and
+you can see the estimate on its own.
+
+</Step>
+<Step>
+
+### Emulate a motion capture system
+
+A motion capture system measures the drone's pose from outside, with millimetre noise and no drift.
+You can emulate one with a node that republishes the simulator's pose with some noise. Create
+`fake_mocap.py`:
+
+```python title="fake_mocap.py"
+import random
+
+import rclpy
+from geometry_msgs.msg import PoseStamped
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+
+NOISE = 0.005  # Standard deviation of the position noise, in meters
+
+
+class FakeMocap(Node):
+    """Republish the simulator's pose with some noise, like a motion capture system."""
+
+    def __init__(self) -> None:
+        super().__init__("fake_mocap")
+        self.pub = self.create_publisher(PoseStamped, "/mocap/drone0/pose", 10)
+        self.create_subscription(
+            PoseStamped, "/drone0/ground_truth/pose", self.on_pose, qos_profile_sensor_data)
+
+    def on_pose(self, msg: PoseStamped) -> None:
+        msg.header.frame_id = "earth"
+        msg.pose.position.x += random.gauss(0.0, NOISE)
+        msg.pose.position.y += random.gauss(0.0, NOISE)
+        msg.pose.position.z += random.gauss(0.0, NOISE)
+        self.pub.publish(msg)
+
+
+rclpy.init()
+rclpy.spin(FakeMocap())
+```
+
+The poses are stamped in `earth`, like those of a real system. The topic sits outside the drone's
+namespace, where a motion capture driver would publish it.
+
+</Step>
+<Step>
+
+### Fuse it with the IMU
+
+The `simple_ekf` plugin predicts with the IMU and corrects with any number of sources. Replace the
+whole `state_estimator` block in `config/config.yaml` with one that corrects with the emulated
+motion capture:
+
+```yaml title="config/config.yaml (excerpt)"
+  state_estimator:
+    ros__parameters:
+      plugin_name: "simple_ekf"
+      simple_ekf:
+        update_topics: ["mocap"]
+        mocap:
+          topic: "/mocap/drone0/pose"
+          type: "geometry_msgs/msg/PoseStamped"
+          set_earth_map: true
+          use_message_covariance: false
+          position_covariance: [2.5e-5, 2.5e-5, 2.5e-5]
+          orientation_covariance: [1e-5, 1e-5, 1e-5]
+```
+
+- `update_topics` names the correction sources. Each one gets a block of its own with the same name.
+- `set_earth_map` places `map` with the first motion capture pose.
+- `position_covariance` is the noise of the source, 5 mm squared on each axis, which matches
+  `fake_mocap.py`.
+
+Start the drone, then the emulated motion capture in a second terminal, and `drift.py` in a third:
+
+```bash tab="apt, source or Docker"
+./launch_as2.bash
+python3 fake_mocap.py
+python3 drift.py
+```
+
+```bash tab="Pixi"
+pixi run launch
+pixi run python3 fake_mocap.py
+pixi run python3 drift.py
+```
+
+The estimator waits for the first motion capture pose before it publishes anything. When it
+arrives, the estimator's log in the `basics_robotics_functions` window says "Setting earth to map
+transform from the first pose on topic /mocap/drone0/pose".
+
+```console noCopy
+Hover 5s  estimate ( -0.02,  -0.02,  1.50)  truth ( -0.02,  -0.03,  1.50)  error  0.01 m
+Hover 10s estimate ( -0.07,  -0.04,  1.50)  truth ( -0.02,  -0.03,  1.50)  error  0.05 m
+Hover 15s estimate ( -0.01,  -0.01,  1.50)  truth ( -0.02,  -0.03,  1.50)  error  0.02 m
+Hover 20s estimate (  0.03,  -0.02,  1.50)  truth ( -0.02,  -0.03,  1.50)  error  0.05 m
+Hover 25s estimate ( -0.04,  -0.05,  1.51)  truth ( -0.02,  -0.03,  1.50)  error  0.03 m
+Hover 30s estimate ( -0.03,  -0.02,  1.51)  truth ( -0.02,  -0.03,  1.50)  error  0.01 m
+Landed    estimate ( -0.06,  -0.03, -0.00)  truth ( -0.02,  -0.03,  0.00)  error  0.04 m
+```
+
+The same noisy IMU that drifted 30 m on its own now stays within a few centimetres.
+
+</Step>
+<Step>
+
+### Watch the corrections
+
+Print `map → odom` again while `drift.py` hovers:
+
+```bash
+ros2 run tf2_ros tf2_echo drone0/map drone0/odom
+```
+
+This time it isn't zero, and it isn't static. It moves by a few tens of centimetres while the drone
+hovers, and `odom → base_link` moves the opposite way. Between corrections the filter predicts with
+the IMU, so `odom → base_link` drifts like the odometry did. Motion capture is an absolute source, so
+each correction lands in `map → odom` and pulls the chain back. The full pose, `earth → base_link`,
+stays within a few centimetres of the truth.
+
+That's the split [Frames](/docs/concepts/frames#how-the-transforms-change) describes. `odom` stays
+smooth for the motion controller, and `earth` stays right for the mission.
+
+</Step>
+<Step>
+
+### Put it back
+
+Stop the drone and `fake_mocap.py`, and restore the project's configuration:
+
+```bash tab="apt, source or Docker"
+./stop.bash
+git restore config/config.yaml
+```
+
+```bash tab="Pixi"
+pixi run stop
+git restore config/config.yaml
+```
+
+</Step>
+</Steps>
+
+## What you saw
+
+| Estimator | Reads | Error after 30 s | Where the corrections go |
+| --- | --- | --- | --- |
+| `ground_truth` | The simulator's exact pose | 0 | Nothing to correct. The pose is all in `odom → base_link` |
+| `raw_odometry` | The simulator's odometry | More than 30 m | Nothing corrects it. The drift is all in `odom → base_link` |
+| `simple_ekf` | The IMU and motion capture | A few centimetres | `map → odom` |
+
+## Going further
+
+- **A real motion capture system.** A [mocap4r2](https://github.com/MOCAP4ROS2-Project) driver
+  publishes `mocap4r2_msgs/msg/RigidBodies`. Set the source's `type` to that and add
+  `rigid_body_name`. The [plugin reference](/docs/plugins/state-estimator#simple-ekf) lists every
+  setting.
+- **Motion capture without the IMU.** The `ground_truth` plugin reads a motion capture rigid body
+  directly when `mocap_sub_topic` is set, without filtering it.
+- **A drifting source.** Feed the EKF an odometry with `is_odometry` true, and its corrections land in
+  `odom → base_link` instead, leaving `map → odom` to the absolute sources.
+
+## Next steps
+
+<Cards>
+  <Card title="The motion controller" href="/docs/tutorials/motion-controller" description="Control modes, switching controllers and tuning a PID." />
+  <Card title="State estimator plugins" href="/docs/plugins/state-estimator" description="Every setting of the ground truth, raw odometry and EKF plugins." />
+  <Card title="Frames" href="/docs/concepts/frames" description="How earth, map, odom and base_link relate." />
+</Cards>
