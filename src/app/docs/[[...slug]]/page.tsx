@@ -48,6 +48,10 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
       full={page.data.full}
       // Ruled off under the TOC entries, like the sidebar's footer.
       tableOfContent={{
+        // The TOC's grid area also covers the right gutter past the layout
+        // width; this pins it to the right edge of the screen, mirroring the
+        // sidebar (src/app/docs/layout.tsx).
+        container: { className: "justify-self-end" },
         footer: lastUpdatedNote && (
           <div className="mt-2 border-t border-fd-border pt-3">
             {lastUpdatedNote}

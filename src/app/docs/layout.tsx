@@ -69,7 +69,13 @@ export default function Layout({ children }: LayoutProps<"/docs">) {
           // The aside defaults to `bg-fd-card`, a step off the page. This
           // merges through a tailwind-aware `cn`, so it replaces that rather
           // than layering on it; the `border-e` still divides the two.
-          className: "bg-fd-background",
+          //
+          // The sidebar's grid area also covers the left gutter that opens
+          // up past the layout width, and the aside fills it with its items
+          // pushed to the end. Sizing it to the sidebar and aligning it to
+          // the start pins it to the left edge of the screen instead. The
+          // TOC is pinned to the right the same way (`[[...slug]]/page.tsx`).
+          className: "bg-fd-background w-(--fd-sidebar-width) items-start",
           collapsible: false,
           components: {
             Folder: AccordionFolder,
