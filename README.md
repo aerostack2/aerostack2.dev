@@ -22,6 +22,14 @@ Then open http://localhost:3000.
 | `bun start` | Serves the production build |
 | `bun run types:check` | Checks the types |
 | `bun run lint` | Lints and checks formatting with Biome |
+| `bun run changelog` | Writes `CHANGELOG.md` from the commit history with git-cliff |
+
+## Commits
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org), checked by
+commitlint. `bun install` sets up the git hooks with lefthook: Biome fixes the staged files before
+each commit and commitlint checks the message. CI runs the lint, the type check, the build and
+commitlint on every push to `main` and every pull request.
 
 ## Environment
 
