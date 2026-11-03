@@ -1,0 +1,335 @@
+---
+title: Your project with Pixi
+description: Start a Pixi workspace that installs the released Aerostack2, and build a C++ package of your own on top of it.
+icon: FolderPlus
+---
+
+Most work on top of Aerostack2 doesn't change Aerostack2 itself. You write a node, a plugin or a
+mission of your own, and run it next to the stock components. This tutorial sets up a
+[Pixi](https://pixi.sh) workspace for that. Pixi installs Aerostack2 already built, so the only
+code it compiles is yours, and it runs on Linux and on macOS with Apple silicon.
+
+You'll build `altitude_monitor`, a small C++ node that warns when the drone flies above a set
+altitude.
+
+## Before you start
+
+- **Pixi 0.83 or later.** See [Install Pixi](/docs/getting-started/installation#install-pixi).
+- **Some ROS 2.** You should know what a package, a node and a topic are.
+
+## Where the packages come from
+
+Your workspace takes packages from three channels.
+
+| Channel | What it holds |
+| --- | --- |
+| `aerostack2/aerostack2-humble` or `aerostack2/aerostack2-jazzy` on [prefix.dev](https://prefix.dev) | Every Aerostack2 package, built for one distro |
+| `robostack-humble` or `robostack-jazzy` | ROS 2, from [RoboStack](https://robostack.github.io) |
+| `conda-forge` | Everything else, like compilers and libraries |
+
+The Aerostack2 packages keep their ROS names, like `as2_core` and `as2_python_api`. The
+`aerostack2` package installs all of them at once.
+
+<Steps>
+<Step>
+
+### Create the workspace
+
+Make a folder for the workspace, with a folder inside it for your package:
+
+```bash
+mkdir -p my_drone/altitude_monitor/src
+cd my_drone
+```
+
+By the end of the tutorial it holds these files:
+
+<FileTree>
+  <TreeFolder name="my_drone">
+    <TreeFile name="pixi.toml" note="The workspace, its channels and what it installs" />
+    <TreeFolder name="altitude_monitor">
+      <TreeFile name="pixi.toml" note="How Pixi builds the package" />
+      <TreeFile name="package.xml" />
+      <TreeFile name="CMakeLists.txt" />
+      <TreeFolder name="src">
+        <TreeFile name="altitude_monitor_node.cpp" />
+      </TreeFolder>
+    </TreeFolder>
+  </TreeFolder>
+</FileTree>
+
+Create the workspace's `pixi.toml` for your distro:
+
+```toml tab="Humble" title="pixi.toml"
+[workspace]
+name = "my_drone"
+preview = ["pixi-build"]
+channels = [
+  "https://prefix.dev/aerostack2/aerostack2-humble",
+  "robostack-humble",
+  "conda-forge",
+]
+platforms = [
+  { platform = "linux-64", glibc = "2.34" },
+  { platform = "linux-aarch64", glibc = "2.34" },
+  "osx-arm64",
+]
+
+# libcxx 23 dropped std::wstring_convert, which the ROS 2 message headers still use.
+[workspace.target.osx-arm64.build-variants]
+c_compiler_version = ["22"]
+cxx_compiler_version = ["22"]
+
+[dependencies]
+altitude_monitor = { path = "altitude_monitor" }
+ros-humble-ros2run = "*"
+ros-humble-ros2launch = "*"
+ros-humble-ros2topic = "*"
+ros-humble-ros2param = "*"
+```
+
+```toml tab="Jazzy" title="pixi.toml"
+[workspace]
+name = "my_drone"
+preview = ["pixi-build"]
+channels = [
+  "https://prefix.dev/aerostack2/aerostack2-jazzy",
+  "robostack-jazzy",
+  "conda-forge",
+]
+platforms = [
+  { platform = "linux-64", glibc = "2.34" },
+  { platform = "linux-aarch64", glibc = "2.34" },
+  "osx-arm64",
+]
+
+# libcxx 23 dropped std::wstring_convert, which the ROS 2 message headers still use.
+[workspace.target.osx-arm64.build-variants]
+c_compiler_version = ["22"]
+cxx_compiler_version = ["22"]
+
+[dependencies]
+altitude_monitor = { path = "altitude_monitor" }
+ros-jazzy-ros2run = "*"
+ros-jazzy-ros2launch = "*"
+ros-jazzy-ros2topic = "*"
+ros-jazzy-ros2param = "*"
+```
+
+`altitude_monitor` is a path dependency, so Pixi builds it from the folder rather than downloading
+it. The `ros2` commands are there to run and inspect the node. Aerostack2 itself isn't listed,
+because your package pulls in what it needs.
+
+</Step>
+<Step>
+
+### Write the node
+
+The node subscribes to the drone's pose and warns, at most once a second, when it's above
+`max_altitude`:
+
+```cpp title="altitude_monitor/src/altitude_monitor_node.cpp"
+#include <memory>
+
+#include <as2_core/names/topics.hpp>
+#include <as2_core/node.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+class AltitudeMonitor : public as2::Node
+{
+public:
+  AltitudeMonitor()
+  : as2::Node("altitude_monitor")
+  {
+    max_altitude_ = this->declare_parameter("max_altitude", 5.0);
+
+    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+      as2_names::topics::self_localization::pose,
+      as2_names::topics::self_localization::qos,
+      [this](const geometry_msgs::msg::PoseStamped & msg) {
+        if (msg.pose.position.z > max_altitude_) {
+          RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "Altitude %.2f m is above the %.2f m limit", msg.pose.position.z, max_altitude_);
+        }
+      });
+  }
+
+private:
+  double max_altitude_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
+};
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<AltitudeMonitor>());
+  rclcpp::shutdown();
+  return 0;
+}
+```
+
+`as2::Node` is a ROS 2 node that also knows the drone's frame names. The topic name and its QoS come
+from `as2_core`, so the node listens where the
+[state estimator](/docs/concepts/state-estimator) publishes. The name is relative, so the node
+follows its namespace, like `/drone0/self_localization/pose` for `drone0`.
+
+</Step>
+<Step>
+
+### Describe the package
+
+The `package.xml` and `CMakeLists.txt` are the same as in any ROS 2 package:
+
+```xml title="altitude_monitor/package.xml"
+<?xml version="1.0"?>
+<package format="3">
+  <name>altitude_monitor</name>
+  <version>0.1.0</version>
+  <description>Warns when the drone flies above a set altitude.</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>as2_core</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake title="altitude_monitor/CMakeLists.txt"
+cmake_minimum_required(VERSION 3.8)
+project(altitude_monitor)
+
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(as2_core REQUIRED)
+
+add_executable(altitude_monitor_node src/altitude_monitor_node.cpp)
+ament_target_dependencies(altitude_monitor_node rclcpp geometry_msgs as2_core)
+
+install(TARGETS altitude_monitor_node DESTINATION lib/${PROJECT_NAME})
+
+ament_package()
+```
+
+</Step>
+<Step>
+
+### Tell Pixi how to build it
+
+Each package in the workspace needs a `pixi.toml` of its own:
+
+```toml title="altitude_monitor/pixi.toml"
+[package]
+name = "altitude_monitor"
+
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.7.*" }
+
+[package.build.config]
+extra-package-mappings = [{ as2_core = { conda = ["as2_core"] } }]
+```
+
+The `pixi-build-ros` backend reads the `package.xml` and builds the package from it. It takes the
+name, the version and the dependencies from there, so you don't repeat them.
+
+It also turns each dependency into a RoboStack package name, so `rclcpp` becomes
+`ros-humble-rclcpp`. Aerostack2 is published under its own names instead, so
+`extra-package-mappings` maps `as2_core` to the `as2_core` package. Add an entry for every
+Aerostack2 package your `package.xml` depends on.
+
+</Step>
+<Step>
+
+### Build
+
+```bash
+pixi install
+```
+
+Pixi downloads ROS 2 and Aerostack2, already built, then compiles `altitude_monitor` and installs
+it into the environment. Only your package is compiled, so it's done in about a minute.
+
+</Step>
+<Step>
+
+### Run it
+
+Start the node in the `drone0` namespace, with a limit of 2 m:
+
+```bash
+pixi run ros2 run altitude_monitor altitude_monitor_node \
+  --ros-args -r __ns:=/drone0 -p max_altitude:=2.0
+```
+
+In a second terminal, in the same folder, publish a pose 3.5 m up in place of the state estimator:
+
+```bash
+pixi run ros2 topic pub --qos-reliability best_effort -r 5 \
+  /drone0/self_localization/pose geometry_msgs/msg/PoseStamped \
+  '{pose: {position: {z: 3.5}}}'
+```
+
+The node warns once a second:
+
+```console noCopy
+[WARN] [drone0.altitude_monitor]: Altitude 3.50 m is above the 2.00 m limit
+```
+
+Stop both with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+
+</Step>
+</Steps>
+
+## Change the code
+
+Edit the node, then run it again. `pixi run` sees that the package changed and rebuilds it before it
+starts, in a few seconds. `pixi shell` does the same when it opens, and `pixi install` rebuilds
+without running anything.
+
+## Add more packages
+
+Each package gets its own folder with a `pixi.toml`, and a path dependency in the workspace's
+`pixi.toml`. When one of your packages depends on another, list it as a host dependency of the
+package that uses it, and map it to nothing so Pixi doesn't look for it in a channel:
+
+```toml title="altitude_monitor/pixi.toml"
+[package.build.config]
+extra-package-mappings = [{ as2_core = { conda = ["as2_core"] }, limits = { conda = [] } }]
+
+[package.host-dependencies]
+limits = { path = "../limits" }
+```
+
+Pixi builds `limits` first, and rebuilds `altitude_monitor` whenever `limits` changes.
+
+## Fly with it
+
+To run the node next to a drone, add it to a project. The
+[multirotor simulator project](https://github.com/aerostack2/project_as2_multirotor_simulator) is a
+Pixi workspace too, so copy your package's folder into it and add a path dependency to the
+project's `pixi.toml`:
+
+```toml
+[dependencies]
+altitude_monitor = { path = "altitude_monitor" }
+```
+
+Then start the drone as the project explains, and run your node in its namespace with `pixi run`.
+
+## Next steps
+
+<Cards>
+  <Card title="Creating a package" href="/docs/develop/new-package" description="The layout and conventions of an Aerostack2 package." />
+  <Card title="Developing with Pixi" href="/docs/develop/pixi-development" description="Build Aerostack2 itself from your clone, and run your changes." />
+</Cards>

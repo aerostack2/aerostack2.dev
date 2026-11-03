@@ -1,0 +1,118 @@
+---
+title: Developing with Pixi
+description: Build Aerostack2 from your clone with Pixi, change it, and run your changes in a project, on Linux or macOS.
+icon: Hammer
+---
+
+[Pixi](https://pixi.sh) builds Aerostack2 straight from a clone of the repository, with ROS 2 from
+[RoboStack](https://robostack.github.io) and no system-wide install. It's the only way to work on
+Aerostack2 on macOS, and it works the same on Linux. This page covers the loop of building, changing
+and running your code.
+
+## Before you start
+
+- **Pixi 0.83 or later.** See [Install Pixi](/docs/getting-started/installation#install-pixi).
+- **A clone of Aerostack2.** Clone your fork if you plan to open a pull request, as
+  [Opening a pull request](/docs/develop/pull-requests) explains.
+- **The git hooks.** Install them once, as in
+  [Setting up](/docs/develop/setting-code#install-the-git-hooks).
+
+## The environments
+
+The repository defines three Pixi environments in its `pixi.toml`.
+
+| Environment | What it holds |
+| --- | --- |
+| `default` | Aerostack2 built for Humble |
+| `jazzy` | Aerostack2 built for Jazzy |
+| `lint` | Only the linters and the git hooks, without ROS 2 or Aerostack2 |
+
+Commands use the `default` environment unless you pass another one with `-e`, as in
+`pixi install -e jazzy`.
+
+## Build
+
+From the root of your clone:
+
+```bash
+pixi install
+```
+
+Each Aerostack2 package has a `pixi.toml` of its own, and Pixi builds every one of them as a
+package, in the order their dependencies require. The first build downloads ROS 2 and compiles the
+whole of Aerostack2, so it takes a while. Later builds only redo what changed.
+
+## Change the code
+
+Edit any package, then build again:
+
+```bash
+pixi install
+```
+
+Pixi tracks the files of each package. It rebuilds the packages you changed and the packages that
+depend on them, so a change to a header in `as2_core` reaches every node built on it. `pixi run`
+and `pixi shell` check the same way before they start, so you can skip `pixi install` and let them
+rebuild.
+
+Every package is installed into the environment as a copy, the way a released package would be.
+There's no equivalent of colcon's `--symlink-install`, so a change to a Python file or a launch file
+needs a rebuild too.
+
+## Run your changes
+
+The repository's environment holds Aerostack2 and `ros2 pkg`, and little else. Check that a package
+is built with:
+
+```bash
+pixi run ros2 pkg list | grep as2_
+```
+
+To fly with your changes, run them in a project. The
+[multirotor simulator project](https://github.com/aerostack2/project_as2_multirotor_simulator) has a
+`pixi.toml` that installs Aerostack2 as one of its dependencies, together with the ROS 2 tools and
+the tasks that start the drone. Point that dependency at your clone instead. With the project cloned
+next to Aerostack2:
+
+```toml title="project_as2_multirotor_simulator/pixi.toml"
+[dependencies]
+aerostack2 = { path = "../aerostack2/aerostack2" }
+```
+
+Then start the drone from the project as usual:
+
+```bash
+cd project_as2_multirotor_simulator
+pixi run launch
+```
+
+The project builds Aerostack2 from your clone, and rebuilds it whenever you change it, so each
+`pixi run launch` flies your latest code. The project has its own build cache, so its first build
+compiles Aerostack2 again. It builds for the project's distro, which is Jazzy by default in the
+multirotor simulator project. Use `pixi run -e humble launch` for Humble.
+
+## What doesn't work
+
+The Pixi environments don't include colcon. `as2 build` and `as2 test` don't work in them, and
+neither do the package tests. Run the linters through the git hooks, as in
+[Setting up](/docs/develop/setting-code#run-the-linters-yourself), and let the pull request's checks
+run the tests on Linux.
+
+## Free up space
+
+Pixi keeps the build of every package under `.pixi/bld`, and after many rebuilds it can take tens of
+gigabytes. To remove it:
+
+```bash
+pixi clean --build
+```
+
+The next `pixi install` compiles Aerostack2 from scratch again. `pixi clean` alone also removes the
+environments.
+
+## Next steps
+
+<Cards>
+  <Card title="Your project with Pixi" href="/docs/develop/pixi-project" description="Build your own package on top of the released Aerostack2." />
+  <Card title="Creating a package" href="/docs/develop/new-package" description="How a package is laid out, and the pixi.toml it needs." />
+</Cards>

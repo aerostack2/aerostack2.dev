@@ -50,7 +50,8 @@ pixi install
 
 Pixi builds every package itself, from the files in your clone. It tracks each package's sources,
 so after you change code, running `pixi install` again rebuilds what changed. `pixi shell` then
-opens a shell with your build of Aerostack2.
+opens a shell with your build of Aerostack2. [Developing with Pixi](/docs/develop/pixi-development)
+covers the whole loop, from a change to a flight.
 
 The Pixi environment doesn't include colcon, so `as2 build` and `as2 test` don't work in it, and
 neither do the package tests. The git hooks below work on macOS too, and the pull request's checks
