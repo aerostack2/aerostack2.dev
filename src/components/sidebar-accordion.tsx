@@ -156,7 +156,9 @@ export function AccordionFolder({
  * `layouts/docs/slots/sidebar` for the same reason as `TRIGGER_CLASS`: the
  * styled `SidebarItem` isn't exported, and overriding `Item` replaces it.
  * `ITEM_HIGHLIGHT_CLASS` is the `highlight` variant, which draws the active bar
- * on the guide line inside a section.
+ * on the guide line inside a section. Unlike Fumadocs' version, the bar runs
+ * the full height of the row (`inset-y-0` instead of `inset-y-2.5`), so it
+ * reads as an accent on the guide line rather than a stray tick.
  */
 const ITEM_CLASS =
   "relative flex flex-row items-center gap-2 rounded-lg p-2 text-start" +
@@ -168,7 +170,7 @@ const ITEM_CLASS =
 const ITEM_HIGHLIGHT_CLASS =
   "data-[active=true]:before:content-[''] data-[active=true]:before:bg-fd-primary" +
   " data-[active=true]:before:absolute data-[active=true]:before:w-px" +
-  " data-[active=true]:before:inset-y-2.5 data-[active=true]:before:inset-s-2.5";
+  " data-[active=true]:before:inset-y-0 data-[active=true]:before:inset-s-2.5";
 
 /**
  * Drop-in for the sidebar's default page row renderer.
