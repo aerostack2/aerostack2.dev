@@ -77,6 +77,12 @@ const TRIGGER_CLASS =
 const TRIGGER_PADDING_START = "calc(2 * var(--spacing))";
 
 /**
+ * Marks a top-level group label, so the section under it can drop its rule.
+ * Keep it in step with the `[.sidebar-group-label+&]` variants in FOLDER_CLASS.
+ */
+const GROUP_LABEL = "sidebar-group-label";
+
+/**
  * Rule between sections. `-mx-4` cancels the `p-4` on the sidebar viewport so
  * the border reaches both edges; `px-2` then sets the inset for the contents.
  * Because the border sits outside the padding, this controls how far the
@@ -92,7 +98,10 @@ const FOLDER_CLASS =
   "-mx-4 px-2 border-t border-fd-border pt-1 mt-1" +
   // The first section also cancels the viewport's `pt-4` so it sits just under
   // the search box rather than a full row below it.
-  " first:border-t-0 first:pt-1 first:-mt-4";
+  " first:border-t-0 first:pt-1 first:-mt-4" +
+  // A section right under a group label belongs to it, so no rule between them.
+  // Written out in full, since Tailwind only sees literal class names.
+  " [.sidebar-group-label+&]:border-t-0 [.sidebar-group-label+&]:mt-0";
 
 /** `[&>a]:py-1` tightens the page rows, which default to `p-2`. */
 const CONTENT_CLASS =
@@ -222,11 +231,25 @@ function itemOffset(depth: number) {
 }
 
 /**
- * A `---Label---` entry in a `meta.json`, drawn as a small uppercase label
- * followed by a rule that runs to the end of the row.
+ * A `---Label---` entry in a `meta.json`. At the top level it names a group of
+ * sections and reads as a heading: uppercase in full colour, no rule, extra
+ * space above.
+ * `-mx-4 px-4` lines its text up with the section triggers. Inside a section
+ * it's a small uppercase label followed by a rule that runs to the end of the
+ * row.
  */
 export function SidebarSeparator({ item }: { item: PageTree.Separator }) {
   const depth = Base.useFolderDepth();
+
+  if (depth === 0) {
+    return (
+      <Base.SidebarSeparator
+        className={`${GROUP_LABEL} -mx-4 mt-5 mb-1 px-4 text-[0.65625rem] font-semibold uppercase tracking-wider text-fd-foreground`}
+      >
+        {item.name}
+      </Base.SidebarSeparator>
+    );
+  }
 
   return (
     <Base.SidebarSeparator

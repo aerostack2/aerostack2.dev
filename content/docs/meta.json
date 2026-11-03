@@ -1,15 +1,18 @@
 {
   "pages": [
     "index",
+    "---Learn---",
     "getting-started",
     "tutorials",
     "concepts",
+    "---Reference---",
     "aerial-platforms",
-    "plugins",
     "user-interfaces",
+    "plugins",
     "ros2-interfaces",
-    "develop",
     "cli",
+    "---Build and take part---",
+    "develop",
     "projects",
     "about"
   ]
