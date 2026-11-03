@@ -1,119 +1,50 @@
 ---
-title: Aerostack2
-description: An open source framework for developing multi-robot aerial systems, built on ROS 2.
+title: Introduction
+description: Aerostack2 is an open source ROS 2 framework for building autonomous aerial systems, from a single drone to a swarm.
+icon: BookOpen
 ---
 
-Aerostack2 is an open source software framework that helps developers design and build the control
-architecture of aerial robotic systems, integrating multiple heterogeneous computational solutions —
-computer vision algorithms, motion controllers, self-localization and mapping methods, motion
-planning algorithms and more.
+Aerostack2 gives you the parts of an autonomous drone that every project needs: the link to the
+hardware, state estimation, motion control and a library of behaviors such as take off, go to and
+land. You write the mission on top, in Python or as a behavior tree, and the framework does the
+rest.
 
-<Cards>
-  <Card title="Getting Started" href="/docs/getting-started" description="Install Aerostack2 and run your first flight." />
-  <Card title="Concepts" href="/docs/concepts" description="The architecture, communications and core abstractions." />
-  <Card title="Examples" href="/docs/examples" description="Ready-to-run projects for Gazebo, Crazyflie, DJI, Pixhawk and Tello." />
-  <Card title="Develop" href="/docs/develop" description="Set up the code and build your own platforms, behaviors and plugins." />
-</Cards>
-
-## Migration status
-
-<Callout type="info" title="This site is being rebuilt">
-  The pages under each section are stubs. Content is ported from the Sphinx site one page at a time —
-  each stub names the reST file it comes from.
-</Callout>
-
-The components below replace the reST directives used by the old site, and are available in every
-MDX page without importing them.
-
-### Callouts
-
-Replaces `.. note::` and `.. warning::`.
-
-<Callout type="warn">
-  Aerostack2 requires ROS 2 Humble. Earlier distributions are no longer supported.
-</Callout>
-
-### Figures
-
-Replaces `.. figure::`, including its `:scale:` option.
-
-<Figure
-  src="/architecture-overview.jpg"
-  alt="Aerostack2 architecture"
-  caption="Aerostack2 architecture overview"
-  scale={80}
-/>
-
-### Videos
-
-Replaces the hand-written `.. raw:: html` iframe embeds.
+- **Hardware-independent.** Your mission talks to a standard set of ROS 2 interfaces. Moving from
+  simulation to a real Crazyflie, Tello, DJI or PX4 drone means changing the aerial platform, not the
+  mission.
+- **Modular.** Each component is a ROS 2 node, and most of them load their algorithm as a plugin, so
+  you can swap a controller or an estimator without touching the rest.
+- **Multi-robot.** Each drone runs its own copy of the stack under its own namespace, so one drone
+  and a swarm are built the same way.
+- **Open source.** Released under the [BSD 3-Clause license](/docs/about/license) and open to anyone
+  who wants to take part.
 
 <Video youtube="IvItNtSB-QE" title="Aerostack2: A framework for developing Multi-Robot Aerial Systems" />
 
-### Tables
+## Learn
 
-Replaces `.. list-table::`.
+New to Aerostack2? Start here, in this order.
 
-| Name              | Type                       | Quality of Service | Description                                  |
-| ----------------- | -------------------------- | ------------------ | -------------------------------------------- |
-| `platform/info`   | `as2_msgs/PlatformInfo`    | DefaultQoS         | Connection, arming, offboard and fly status   |
-| `actuator_command/pose` | `geometry_msgs/PoseStamped` | SensorDataQoS | Position in metres and orientation in radians |
+<Cards>
+  <Card title="Getting Started" href="/docs/getting-started" description="What you need, how to install it, and your first flight in simulation." />
+  <Card title="Tutorials" href="/docs/tutorials" description="Step-by-step lessons, from flying by hand to the main modules." />
+  <Card title="Concepts" href="/docs/concepts" description="The architecture, the communication channels and each part of a drone's stack." />
+</Cards>
 
-### Math
+## Reference
 
-Replaces `.. math::` and the `:math:` role, rendered with KaTeX. Inline math uses `$…$` and display
-math uses `$$…$$`.
+<Cards>
+  <Card title="Aerial Platforms" href="/docs/aerial-platforms" description="The simulators and drones Aerostack2 can fly, and how to run each one." />
+  <Card title="Plugins" href="/docs/plugins" description="Every controller, estimator, behavior and planner plugin, and how to pick one." />
+  <Card title="User Interfaces" href="/docs/user-interfaces" description="Tools for flying drones by hand and watching their state." />
+  <Card title="ROS 2 Interfaces" href="/docs/ros2-interfaces" description="The topics, services and actions the components use to talk to each other." />
+  <Card title="CLI" href="/docs/cli" description="The as2 command for building, testing and fetching example projects." />
+</Cards>
 
-Instantaneous mass is thrust over vertical acceleration, where $T$ is the thrust and $a_z$ the
-vertical acceleration in $m/s^2$:
+## Build and take part
 
-$$
-m_{inst} = \frac{T}{{a_z}}
-$$
-
-The force error is the difference between commanded and measured force:
-
-$$
-F_{error} = F_{cmd} - F_{meas} \quad\text{where}\quad F_{meas} = m \cdot {a}_z
-$$
-
-### Code blocks
-
-Replaces `.. code-block::`, rendered with the Fumadocs `CodeBlock` component. The copy button is
-built in, so `sphinx-copybutton` is no longer needed.
-
-`title` covers the 10 places the old docs used `:caption:`, and `lineNumbers` turns on numbering:
-
-```bash title="launch_simulation.sh" lineNumbers
-ros2 launch as2_gazebo_assets launch_simulation.py \
-  use_sim_time:=true \
-  simulation_config_file:=config/world.json
-```
-
-Consecutive blocks tagged with `tab` become a tabbed group — useful for the install pages, which
-currently repeat themselves for each method:
-
-```bash tab="Binary"
-sudo apt install ros-humble-aerostack2
-```
-
-```bash tab="Source"
-vcs import src < aerostack2.repos
-colcon build --symlink-install
-```
-
-Shiki has no SDFormat grammar, so the old `.. code-block:: sdf` blocks become `xml`:
-
-```xml title="model.sdf"
-<sdf version="1.9">
-  <model name="quadrotor">
-    <link name="base_link" />
-  </model>
-</sdf>
-```
-
-Use `noCopy` on blocks that shouldn't be copied, such as sample output:
-
-```console noCopy
-[INFO] [as2_platform]: Platform is ready
-```
+<Cards>
+  <Card title="Develop" href="/docs/develop" description="Change Aerostack2, contribute back, and write your own platforms, behaviors and plugins." />
+  <Card title="Projects" href="/docs/projects" description="The research projects that use Aerostack2 and fund its development." />
+  <Card title="About" href="/docs/about" description="Who builds Aerostack2, the roadmap, how to cite it and how to get in touch." />
+</Cards>

@@ -1,8 +1,10 @@
 "use client";
 
+import { usePathname } from "fumadocs-core/framework";
 import type * as PageTree from "fumadocs-core/page-tree";
 import * as Base from "fumadocs-ui/components/sidebar/base";
 import { useTreePath } from "fumadocs-ui/contexts/tree";
+import { ExternalLink } from "lucide-react";
 import {
   type ComponentProps,
   createContext,
@@ -138,6 +140,77 @@ export function AccordionFolder({
       </Base.SidebarFolderContent>
     </ControlledFolder>
   );
+}
+
+/**
+ * Page rows, copied verbatim from `itemVariants` (the `link` variant) in
+ * `layouts/docs/slots/sidebar` for the same reason as `TRIGGER_CLASS`: the
+ * styled `SidebarItem` isn't exported, and overriding `Item` replaces it.
+ * `ITEM_HIGHLIGHT_CLASS` is the `highlight` variant, which draws the active bar
+ * on the guide line inside a section.
+ */
+const ITEM_CLASS =
+  "relative flex flex-row items-center gap-2 rounded-lg p-2 text-start" +
+  " text-fd-muted-foreground wrap-anywhere [&_svg]:size-4 [&_svg]:shrink-0" +
+  " transition-colors hover:bg-fd-accent/50 hover:text-fd-accent-foreground/80" +
+  " hover:transition-none data-[active=true]:bg-fd-primary/10" +
+  " data-[active=true]:text-fd-primary data-[active=true]:hover:transition-colors";
+
+const ITEM_HIGHLIGHT_CLASS =
+  "data-[active=true]:before:content-[''] data-[active=true]:before:bg-fd-primary" +
+  " data-[active=true]:before:absolute data-[active=true]:before:w-px" +
+  " data-[active=true]:before:inset-y-2.5 data-[active=true]:before:inset-s-2.5";
+
+/**
+ * Drop-in for the sidebar's default page row renderer.
+ *
+ * Pages inside a section render as Fumadocs draws them. A page at the root of
+ * the tree (the Introduction) instead gets the same box as a section, so its
+ * icon lines up with the section icons and the rule between sections runs
+ * under it too. Its row matches `TRIGGER_CLASS`, plus the primary colour when
+ * it is the current page.
+ */
+export function SidebarPageItem({ item }: { item: PageTree.Item }) {
+  const depth = Base.useFolderDepth();
+  const active = isActive(item.url, usePathname());
+  const icon = item.icon ?? (item.external ? <ExternalLink /> : null);
+
+  if (depth === 0) {
+    return (
+      <div className={FOLDER_CLASS}>
+        <Base.SidebarItem
+          href={item.url}
+          external={item.external}
+          active={active}
+          icon={icon}
+          className={`${TRIGGER_CLASS} data-[active=true]:text-fd-primary`}
+          style={{ paddingInlineStart: TRIGGER_PADDING_START }}
+        >
+          {item.name}
+        </Base.SidebarItem>
+      </div>
+    );
+  }
+
+  return (
+    <Base.SidebarItem
+      href={item.url}
+      external={item.external}
+      active={active}
+      icon={icon}
+      className={`${ITEM_CLASS} ${ITEM_HIGHLIGHT_CLASS}`}
+      style={{ paddingInlineStart: itemOffset(depth) }}
+    >
+      {item.name}
+    </Base.SidebarItem>
+  );
+}
+
+/** Same as Fumadocs' `isActive`: exact match, ignoring a trailing slash. */
+function isActive(href: string, pathname: string) {
+  const normalize = (path: string) =>
+    path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  return normalize(href) === normalize(pathname);
 }
 
 /**

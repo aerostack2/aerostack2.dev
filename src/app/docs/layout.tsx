@@ -4,6 +4,7 @@ import { DocsFooter } from "@/components/docs-footer";
 import {
   AccordionFolder,
   SidebarAccordion,
+  SidebarPageItem,
   SidebarSeparator,
 } from "@/components/sidebar-accordion";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -72,6 +73,7 @@ export default function Layout({ children }: LayoutProps<"/docs">) {
           collapsible: false,
           components: {
             Folder: AccordionFolder,
+            Item: SidebarPageItem,
             Separator: SidebarSeparator,
           },
           // Async server component. The counts refresh once a day; left at its
