@@ -1,5 +1,6 @@
 import { GithubInfo } from "fumadocs-ui/components/github-info";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
+import { DocsFooter } from "@/components/docs-footer";
 import {
   AccordionFolder,
   SidebarAccordion,
@@ -50,7 +51,9 @@ const SEARCH_CLASS =
 const GITHUB_INFO_CLASS =
   // `-mb-4` cancels the footer container's own `pb-4` so the card sits flush
   // with the bottom of the sidebar.
-  "-mx-4 px-4 py-3 mt-2 -mb-4 rounded-none border-t border-fd-border" +
+  // `h-10` matches the docs footer bar (src/components/docs-footer.tsx), so
+  // the two line up along the bottom of the page.
+  "-mx-4 px-4 h-10 py-0 mt-2 -mb-4 rounded-none border-t border-fd-border" +
   " flex-row items-center justify-between gap-2 [&>div]:shrink-0" +
   " text-[0.6875rem] [&_svg]:size-3 [&_div]:text-[0.625rem]";
 
@@ -105,6 +108,7 @@ export default function Layout({ children }: LayoutProps<"/docs">) {
         }}
       >
         {children}
+        <DocsFooter />
       </DocsLayout>
     </SidebarAccordion>
   );
