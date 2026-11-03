@@ -27,6 +27,14 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
   const MDX = page.data.body;
   const markdownUrl = getPageMarkdownUrl(page).url;
   const section = getSectionName(page.url);
+  // Formatted here rather than with `PageLastUpdate`, which formats in the
+  // browser's locale after hydration. UTC keeps the day the same everywhere.
+  const lastUpdated = page.data.lastModified?.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
@@ -61,6 +69,11 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
           })}
         />
       </DocsBody>
+      {lastUpdated && (
+        <p className="text-sm text-fd-muted-foreground">
+          Last updated on {lastUpdated}
+        </p>
+      )}
     </DocsPage>
   );
 }

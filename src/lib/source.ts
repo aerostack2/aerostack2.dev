@@ -31,6 +31,9 @@ const docs = defineDocs({
     postprocess: {
       includeProcessedMarkdown: true,
     },
+    // Each page's date comes from the newest commit that touched its file, so
+    // the build needs the full git history (`VERCEL_DEEP_CLONE=true` on Vercel).
+    lastModified: true,
   },
   meta: {
     schema: metaSchema,
