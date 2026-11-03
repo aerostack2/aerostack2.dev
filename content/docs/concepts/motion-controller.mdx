@@ -81,9 +81,11 @@ pair, it tries the next.
 </Step>
 <Step>
 
-### It falls back to hover
+### It falls back to hover, sometimes
 
-If no pair works, the request fails and the controller tries to put the drone in hover instead.
+If the plugin refuses every pair that fits, the request fails, the platform goes back to its
+previous mode and the controller tries hover instead. If no pair fits the request at all, it fails
+straight away and nothing switches to hover, so check the result of the request.
 `controller/info` always reports the pair in use.
 
 </Step>
@@ -140,18 +142,18 @@ configuration file.
 ## Writing a plugin
 
 A controller plugin inherits from `as2_motion_controller_plugin_base::ControllerBase` and lists its
-modes in `available_modes.yaml`, under `input_control_modes` and `output_control_modes`. The only
-required method is `computeOutput`, which fills the pose, twist and thrust command for the current
-cycle.
+modes in `available_modes.yaml`, under `input_control_modes` and `output_control_modes`. It must
+implement three methods. `computeOutput` fills the pose, twist and thrust command for the current
+cycle, `onUpdateState` receives the drone's state and `updateParameter` applies parameter changes.
 
 | Method | What it does |
 | --- | --- |
 | `computeOutput` | Computes the command for this cycle. Required. |
-| `onUpdateState` | Receives the drone's state. |
+| `onUpdateState` | Receives the drone's state. Required. |
 | `onUpdateReference` | Receives a pose, twist, trajectory or thrust reference. |
 | `onSetMode` | Accepts or refuses an input and output mode pair. |
 | `hoverMode` | Says which mode the plugin hovers with. Unset means it can't hover. |
-| `updateParameter` | Applies a parameter change, such as new gains. |
+| `updateParameter` | Applies a parameter change, such as new gains. Required. |
 | `reset` | Clears the controller, like its integrators. |
 
 The [controller plugin guide](/docs/develop/controller-plugin) walks through a complete one.

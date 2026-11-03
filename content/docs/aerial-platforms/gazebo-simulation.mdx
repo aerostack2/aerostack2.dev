@@ -63,11 +63,14 @@ An `objects` list can add more models to the world, such as gates or markers.
 | | Available models |
 | --- | --- |
 | Drones | `quadrotor_base`, `hexrotor_base`, `x500`, `px4vision`, `f330`, `crazyflie`, `quadrotor_cvar_racing` |
-| Cameras | `vga_camera`, `hd_camera`, `semantic_camera`, `grayscale_camera`, `rgbd_camera`, `d435` |
-| Lidars | `planar_lidar`, `lidar_3d`, `point_lidar` |
+| Cameras | `vga_camera`, `hd_camera`, `semantic_camera`, `grayscale_camera`, `rgbd_camera` |
+| Lidars | `planar_lidar`, `lidar_3d` |
 | Other sensors | `gps`, `air_pressure`, `magnetometer` |
 | Gimbals | `gimbal_speed`, `gimbal_position`, each carrying a camera as its own payload |
 | Grippers | `suction_gripper`, `two_fingers_gripper` |
+
+The code also accepts `d435` and `point_lidar`, but `d435` has no model yet and `point_lidar` is
+marked as not working.
 
 Each sensor publishes under `sensor_measurements/` with its name, so a camera called `camera` on
 `drone0` publishes `/drone0/sensor_measurements/camera/image_raw` and `camera_info`. Every drone also

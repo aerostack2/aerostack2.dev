@@ -38,11 +38,11 @@ ros2 launch as2_state_estimator state_estimator_launch.py \
 
 Add `use_sim_time:=true` in simulation.
 
-<Callout type="warn" title="Use plugin_config_file for plugin settings">
-  The launch file loads the plugin's defaults after `config_file`, so a plugin setting placed in
-  `config_file` is replaced by its default. Check what was applied with
+<Callout title="Check what was applied">
+  Plugin settings can also go in `config_file`, under the node's name, as the example projects'
+  `config.yaml` does. Either way, check what the plugin read with
   `ros2 param get /drone0/state_estimator raw_odometry.odom_sub_topic`, or in the startup log, which
-  lists every setting the plugin read.
+  lists every setting.
 </Callout>
 
 | Parameter | Default | What it does |
