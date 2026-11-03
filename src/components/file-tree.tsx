@@ -29,15 +29,14 @@ export function FileTree({
   className?: string;
 }) {
   return (
-    <div
-      role="tree"
+    <ul
       className={cn(
         "not-prose my-6 overflow-x-auto rounded-xl border bg-fd-card p-2 font-mono text-[0.8125rem]",
         className,
       )}
     >
       {children}
-    </div>
+    </ul>
   );
 }
 
@@ -64,18 +63,14 @@ export function TreeFolder({
 }) {
   const Icon = children ? FolderOpen : Folder;
   return (
-    <div role="treeitem" aria-expanded={children ? true : undefined}>
+    <li>
       <div className={cn(ROW, "text-fd-foreground")}>
         <Icon className="size-4 shrink-0 text-fd-primary" />
         <span>{name}/</span>
         <Note>{note}</Note>
       </div>
-      {children ? (
-        <div role="group" className="ms-4 border-s ps-2">
-          {children}
-        </div>
-      ) : null}
-    </div>
+      {children ? <ul className="ms-4 border-s ps-2">{children}</ul> : null}
+    </li>
   );
 }
 
@@ -92,10 +87,10 @@ function iconFor(name: string) {
 export function TreeFile({ name, note }: { name: string; note?: ReactNode }) {
   const Icon = iconFor(name);
   return (
-    <div role="treeitem" className={cn(ROW, "text-fd-foreground/90")}>
+    <li className={cn(ROW, "text-fd-foreground/90")}>
       <Icon className="size-4 shrink-0 text-fd-muted-foreground" />
       <span>{name}</span>
       <Note>{note}</Note>
-    </div>
+    </li>
   );
 }
