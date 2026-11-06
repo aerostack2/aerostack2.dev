@@ -6,7 +6,8 @@ import { gitConfig, projectRepo } from "@/lib/shared";
  * and the people behind the project (components/home/community.tsx).
  *
  * The maintainers are the code owners in the main repository's
- * .github/CODEOWNERS, plus Miguel Fernandez-Cortizas, who isn't listed there.
+ * .github/CODEOWNERS, plus Miguel Fernandez-Cortizas and Javier Melero, who
+ * aren't listed there.
  * Names come from their GitHub profiles, or from the citation when a profile
  * has none.
  */
@@ -18,6 +19,7 @@ export const maintainers = [
   { login: "fjanguita", name: "Francisco Anguita" },
   { login: "rdasilva01", name: "Rodrigo Da Silva" },
   { login: "GPatiA2", name: "Guillermo García Patiño" },
+  { login: "javilinos", name: "Javier Melero" },
 ];
 
 /** Star and fork counts of the main repository. */
